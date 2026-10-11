@@ -69,6 +69,41 @@ std::size_t encodeAck(const AckMsg& a, u8* out, std::size_t cap) {
     return w.ok() ? w.size() : 0;
 }
 
+std::size_t encodeArmMode(const ArmMode& m, u8* out, std::size_t cap) {
+    TlvWriter w(out, cap);
+    w.u8v(MODE_ARM, m.arm_id); w.u8v(MODE_VALUE, m.mode);
+    return w.ok() ? w.size() : 0;
+}
+
+std::size_t encodeParamSet(const ParamSet& p, u8* out, std::size_t cap) {
+    TlvWriter w(out, cap);
+    w.u16v(PARAM_ID, p.param_id); w.f32v(PARAM_VAL, p.value);
+    return w.ok() ? w.size() : 0;
+}
+
+std::size_t encodeEventLog(const EventLog& e, u8* out, std::size_t cap) {
+    TlvWriter w(out, cap);
+    w.u8v(LOG_LEVEL, e.level);
+    w.bytes(LOG_TEXT, e.text, e.text_len);
+    return w.ok() ? w.size() : 0;
+}
+
+std::size_t encodeConnectReq(const ConnectReqMsg& c, u8* out, std::size_t cap) {
+    TlvWriter w(out, cap);
+    w.u16v(CREQ_VERSION, c.version);
+    w.u32v(CREQ_DEVICE, c.device_id);
+    w.u32v(CREQ_NONCE, c.nonce);
+    return w.ok() ? w.size() : 0;
+}
+
+std::size_t encodeConnectAck(const ConnectAckMsg& c, u8* out, std::size_t cap) {
+    TlvWriter w(out, cap);
+    w.u32v(CACK_SESSION, c.session_id);
+    w.u8v(CACK_STATUS, c.status);
+    w.u16v(CACK_CAPS, c.capabilities);
+    return w.ok() ? w.size() : 0;
+}
+
 // ------------------------------------------------------------------------ decode
 bool decodeVelocity(const u8* in, std::size_t len, VelocityCmd& c) {
     TlvReader r(in, len); u8 tag; const u8* v; std::size_t n; bool any = false;
@@ -179,6 +214,74 @@ bool decodeAck(const u8* in, std::size_t len, AckMsg& a) {
         switch (tag) {
             case ACK_SEQ:  any |= TlvReader::asU16(v, n, a.ack_seq); break;
             case ACK_STAT: any |= TlvReader::asU8(v, n, a.status); break;
+            default: break;
+        }
+    }
+    return any;
+}
+
+bool decodeArmMode(const u8* in, std::size_t len, ArmMode& m) {
+    TlvReader r(in, len); u8 tag; const u8* v; std::size_t n; bool any = false;
+    while (r.next(tag, v, n)) {
+        switch (tag) {
+            case MODE_ARM:   any |= TlvReader::asU8(v, n, m.arm_id); break;
+            case MODE_VALUE: any |= TlvReader::asU8(v, n, m.mode); break;
+            default: break;
+        }
+    }
+    return any;
+}
+
+bool decodeParamSet(const u8* in, std::size_t len, ParamSet& p) {
+    TlvReader r(in, len); u8 tag; const u8* v; std::size_t n; bool any = false;
+    while (r.next(tag, v, n)) {
+        switch (tag) {
+            case PARAM_ID:  any |= TlvReader::asU16(v, n, p.param_id); break;
+            case PARAM_VAL: any |= TlvReader::asF32(v, n, p.value); break;
+            default: break;
+        }
+    }
+    return any;
+}
+
+bool decodeEventLog(const u8* in, std::size_t len, EventLog& e) {
+    TlvReader r(in, len); u8 tag; const u8* v; std::size_t n; bool any = false;
+    while (r.next(tag, v, n)) {
+        switch (tag) {
+            case LOG_LEVEL: any |= TlvReader::asU8(v, n, e.level); break;
+            case LOG_TEXT: {
+                std::size_t c = n < sizeof(e.text) ? n : sizeof(e.text);
+                if (c) std::memcpy(e.text, v, c);
+                e.text_len = u8(c);
+                any = true;
+                break;
+            }
+            default: break;
+        }
+    }
+    return any;
+}
+
+bool decodeConnectReq(const u8* in, std::size_t len, ConnectReqMsg& c) {
+    TlvReader r(in, len); u8 tag; const u8* v; std::size_t n; bool any = false;
+    while (r.next(tag, v, n)) {
+        switch (tag) {
+            case CREQ_VERSION: any |= TlvReader::asU16(v, n, c.version); break;
+            case CREQ_DEVICE:  any |= TlvReader::asU32(v, n, c.device_id); break;
+            case CREQ_NONCE:   any |= TlvReader::asU32(v, n, c.nonce); break;
+            default: break;
+        }
+    }
+    return any;
+}
+
+bool decodeConnectAck(const u8* in, std::size_t len, ConnectAckMsg& c) {
+    TlvReader r(in, len); u8 tag; const u8* v; std::size_t n; bool any = false;
+    while (r.next(tag, v, n)) {
+        switch (tag) {
+            case CACK_SESSION: any |= TlvReader::asU32(v, n, c.session_id); break;
+            case CACK_STATUS:  any |= TlvReader::asU8(v, n, c.status); break;
+            case CACK_CAPS:    any |= TlvReader::asU16(v, n, c.capabilities); break;
             default: break;
         }
     }

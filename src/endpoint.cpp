@@ -92,6 +92,10 @@ void Endpoint::poll(int timeout_ms) {
             plen = real;
         }
 
+        // Any valid frame proves the link is alive.
+        last_rx_time_ = std::chrono::steady_clock::now();
+        if (conn_state_ == ConnState::Lost) setState(ConnState::Active);
+
         // ACK / NACK handling
         if (h.flags & FlagIsAck) {
             {
@@ -113,6 +117,7 @@ void Endpoint::poll(int timeout_ms) {
         }
 
         if (h.flags & FlagAckReq) sendAckFor(h.seq, 0);
+        handleSession(h, pl, plen);
         if (on_msg_) on_msg_(h, pl, plen);
 
         timeout_ms = 0; // drain any queued frames
@@ -121,6 +126,18 @@ void Endpoint::poll(int timeout_ms) {
 
 void Endpoint::tick() {
     auto now = std::chrono::steady_clock::now();
+
+    // Session housekeeping: heartbeat + link timeout.
+    if (conn_state_ != ConnState::Idle) {
+        if (now >= next_hb_time_) {
+            if (conn_state_ == ConnState::Connecting) beginConnect(nonce_);
+            else sendHeartbeat();
+            next_hb_time_ = now + hb_interval_;
+        }
+        if (conn_state_ == ConnState::Active && now - last_rx_time_ > link_timeout_)
+            setState(ConnState::Lost);
+    }
+
     std::lock_guard<std::mutex> lk(mtx_);
     for (auto it = pending_.begin(); it != pending_.end();) {
         Pending& p = it->second;
@@ -161,6 +178,62 @@ void Endpoint::sendNackFor(u16 seq, u8 reason) {
 std::size_t Endpoint::pendingCount() {
     std::lock_guard<std::mutex> lk(mtx_);
     return pending_.size();
+}
+
+void Endpoint::setState(ConnState s) {
+    if (s == conn_state_) return;
+    conn_state_ = s;
+    if (on_state_) on_state_(s);
+}
+
+void Endpoint::beginConnect(u32 nonce) {
+    is_controller_ = true;
+    nonce_ = nonce;
+    u8 pl[16];
+    ConnectReqMsg req;
+    req.version = kVersion;
+    req.device_id = device_id_;
+    req.nonce = nonce;
+    std::size_t n = encodeConnectReq(req, pl, sizeof(pl));
+    if (n) send(MsgType::ConnectReq, StreamSession, pl, n);
+    if (conn_state_ == ConnState::Idle) setState(ConnState::Connecting);
+    next_hb_time_ = std::chrono::steady_clock::now() + hb_interval_;
+}
+
+void Endpoint::sendHeartbeat() {
+    MsgType t = is_controller_ ? MsgType::Heartbeat : MsgType::HeartbeatUp;
+    send(t, StreamSession, nullptr, 0);
+}
+
+void Endpoint::handleSession(const FrameHeader& h, const u8* pl, std::size_t n) {
+    switch (MsgType(h.msg_type)) {
+        case MsgType::ConnectReq: {
+            if (is_controller_) break;                // only the robot answers
+            ConnectReqMsg req;
+            if (!decodeConnectReq(pl, n, req)) break;
+            session_id_ = req.nonce ? req.nonce : 0x00000001u;
+            u8 buf[16];
+            ConnectAckMsg ack;
+            ack.session_id = session_id_;
+            ack.status = 0;
+            ack.capabilities = 0x0001;
+            std::size_t m = encodeConnectAck(ack, buf, sizeof(buf));
+            if (m) send(MsgType::ConnectAck, StreamSession, buf, m);
+            next_hb_time_ = std::chrono::steady_clock::now() + hb_interval_;
+            setState(ConnState::Active);
+            break;
+        }
+        case MsgType::ConnectAck: {
+            if (!is_controller_) break;               // only the controller awaits it
+            ConnectAckMsg ack;
+            if (decodeConnectAck(pl, n, ack) && ack.status == 0) {
+                session_id_ = ack.session_id;
+                setState(ConnState::Active);
+            }
+            break;
+        }
+        default: break;
+    }
 }
 
 } // namespace robotlink

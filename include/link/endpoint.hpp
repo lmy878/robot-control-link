@@ -16,13 +16,17 @@ namespace robotlink {
 // downlink commands (ACK + retransmit).
 class Endpoint {
 public:
-    using Handler    = std::function<void(const FrameHeader&, const u8*, std::size_t)>;
-    using AckHandler = std::function<void(u16 ack_seq, u8 status)>;
+    enum class ConnState : u8 { Idle, Connecting, Active, Lost };
+
+    using Handler      = std::function<void(const FrameHeader&, const u8*, std::size_t)>;
+    using AckHandler   = std::function<void(u16 ack_seq, u8 status)>;
+    using StateHandler = std::function<void(ConnState)>;
 
     explicit Endpoint(Transport& t);
 
     void onMessage(Handler h) { on_msg_ = std::move(h); }
     void onAck(AckHandler h)  { on_ack_ = std::move(h); }
+    void onState(StateHandler h) { on_state_ = std::move(h); }
 
     // Best-effort send (telemetry / acks / session). Returns true on success.
     bool send(MsgType type, StreamId stream, const u8* payload, std::size_t plen,
@@ -48,6 +52,14 @@ public:
     void setMaxRetries(int v) { max_retries_ = v; }
     std::size_t pendingCount();
 
+    // ---- session / link monitoring ----
+    void beginConnect(u32 nonce = 0);              // controller initiates handshake
+    void setDeviceId(u32 id) { device_id_ = id; }  // robot identity
+    ConnState connState() const { return conn_state_; }
+    u32 sessionId() const { return session_id_; }
+    void setHeartbeatInterval(std::chrono::milliseconds v) { hb_interval_ = v; }
+    void setLinkTimeout(std::chrono::milliseconds v) { link_timeout_ = v; }
+
 private:
     struct Pending {
         u8 frame[kMaxFrame];
@@ -58,6 +70,9 @@ private:
 
     u16 nextSeq(StreamId s);
     bool isDuplicate(StreamId s, u16 seq);
+    void setState(ConnState s);
+    void handleSession(const FrameHeader& h, const u8* pl, std::size_t n);
+    void sendHeartbeat();
 
     Transport& t_;
     Handler on_msg_;
@@ -73,6 +88,18 @@ private:
     std::chrono::milliseconds rto_{30};
     int max_retries_ = 5;
     u16 piggyback_ack_ = 0;
+
+    // session state
+    ConnState conn_state_ = ConnState::Idle;
+    StateHandler on_state_;
+    bool is_controller_ = false;
+    u32 device_id_ = 0;
+    u32 session_id_ = 0;
+    u32 nonce_ = 0;
+    std::chrono::steady_clock::time_point last_rx_time_{std::chrono::steady_clock::now()};
+    std::chrono::steady_clock::time_point next_hb_time_{std::chrono::steady_clock::now()};
+    std::chrono::milliseconds hb_interval_{1000};
+    std::chrono::milliseconds link_timeout_{3000};
 };
 
 } // namespace robotlink

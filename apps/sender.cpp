@@ -38,6 +38,13 @@ int main(int argc, char** argv) {
 
     Endpoint ep(t);
     ep.setRto(std::chrono::milliseconds(30));
+    ep.setHeartbeatInterval(std::chrono::milliseconds(1000));
+    ep.setLinkTimeout(std::chrono::milliseconds(3000));
+    ep.onState([](Endpoint::ConnState s) {
+        static const char* names[] = {"Idle", "Connecting", "Active", "Lost"};
+        std::printf("sender: link state -> %s\n", names[int(s)]);
+    });
+    ep.beginConnect(0xABCD1234u);      // start the handshake
 
     std::atomic<unsigned> acked{0};
     ep.onAck([&](u16, u8) { acked++; });
@@ -84,7 +91,8 @@ int main(int argc, char** argv) {
         else                  { dir = MoveDir::Stop; }
 
         // Discrete order on state change: reliable (ACK + retransmit).
-        if (dir != last_dir) {
+        const bool active = ep.connState() == Endpoint::ConnState::Active;
+        if (active && dir != last_dir) {
             MoveOrder mo{dir, u8(dir == MoveDir::Stop ? 0 : 180), 0};
             u8 pl[16];
             std::size_t n = encodeMoveOrder(mo, pl, sizeof(pl));
@@ -94,7 +102,7 @@ int main(int argc, char** argv) {
 
         // Continuous velocity setpoint: reliable, but bounded in-flight so stale
         // setpoints are never retransmitted forever (latching on the receiver).
-        if (ep.pendingCount() < in_flight_limit) {
+        if (active && ep.pendingCount() < in_flight_limit) {
             u8 pl[24];
             std::size_t n = encodeVelocity(v, pl, sizeof(pl));
             if (n) ep.sendReliable(MsgType::SetVelocity, StreamControl, pl, n);

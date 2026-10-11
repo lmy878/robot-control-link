@@ -123,17 +123,17 @@ breaking older peers. Values may be `u8`, `u16`, `f32`, or arrays of `f32`.
 
 | Code | Name | TLV tags |
 |-----:|------|----------|
-| `0x01` | `ConnectReq` | session handshake (reserved) |
+| `0x01` | `ConnectReq` | `1=version u16`, `2=device_id u32`, `3=nonce u32` |
 | `0x02` | `Disconnect` | — |
-| `0x03` | `Heartbeat` | — |
+| `0x03` | `Heartbeat` | (controller → robot, empty) |
 | `0x10` | `SetVelocity` | `1=vx f32`, `2=vy f32`, `3=wz f32` (m/s, rad/s) |
 | `0x11` | `MoveOrder` | `1=dir u8`, `2=speed u8`, `3=duration_ms u16` |
 | `0x12` | `Stop` | — |
 | `0x13` | `EmergencyStop` | — |
 | `0x14` | `SetArmJoints` | `1=arm_id u8`, `2=count u8`, `3=joints f32[]` (rad) |
 | `0x15` | `SetArmPose` | `1=arm_id u8`, `2..7 = x,y,z,roll,pitch,yaw f32` |
-| `0x16` | `SetArmMode` | mode |
-| `0x17` | `SetParam` | generic parameter set |
+| `0x16` | `SetArmMode` | `1=arm_id u8`, `2=mode u8` |
+| `0x17` | `SetParam` | `1=param_id u16`, `2=value f32` |
 
 `MoveOrder.dir`: `0` forward, `1` backward, `2` strafe-left, `3` strafe-right,
 `4` rotate-left, `5` rotate-right, `6` stop. `speed` is `0..255`.
@@ -142,14 +142,14 @@ breaking older peers. Values may be `u8`, `u16`, `f32`, or arrays of `f32`.
 
 | Code | Name | TLV tags |
 |-----:|------|----------|
-| `0x81` | `ConnectAck` | session handshake (reserved) |
-| `0x82` | `Heartbeat` | — |
+| `0x81` | `ConnectAck` | `1=session_id u32`, `2=status u8`, `3=capabilities u16` |
+| `0x82` | `Heartbeat` | (robot → controller, empty) |
 | `0x83` | `TelemetryBase` | `1=x`, `2=y`, `3=yaw`, `4=vx`, `5=vy`, `6=wz` (f32), `7=battery u8` |
 | `0x84` | `TelemetryArm` | `1=arm_id u8`, `2=count u8`, `3=joints f32[]` |
 | `0x85` | `Status` | `1=mode u8`, `2=faults u16`, `3=estop u8` |
 | `0x86` | `Ack` | `1=ack_seq u16`, `2=status u8` |
 | `0x87` | `Nack` | `1=ack_seq u16`, `2=reason u8` |
-| `0x88` | `EventLog` | level + text |
+| `0x88` | `EventLog` | `1=level u8`, `2=text bytes` |
 
 ---
 
@@ -193,12 +193,23 @@ when a payload exceeds the link MTU.)
 
 ## 10. Session & timing
 
-- Handshake: `ConnectReq` (version, device id, nonce) → `ConnectAck`
-  (accepted version, session id, capability bitmap). *Reserved, minimal in v1.*
-- **Heartbeat** each direction at 1 Hz.
-- **Failsafe on the robot**: if no valid command is received within **500 ms**,
+State machine: `Idle → Connecting → Active ⇄ Lost`.
+
+- **Handshake** — the controller sends `ConnectReq` (protocol version, device
+  id, nonce) and repeats it every heartbeat interval while `Connecting`. The
+  robot answers `ConnectAck` with a `session_id` (the request nonce in v1) and
+  enters `Active`; the controller enters `Active` on a `ConnectAck` with
+  `status == 0`. Handshake frames are best-effort; the periodic repeat makes
+  loss self-healing.
+- **Heartbeat** — once `Active`, each side sends an empty heartbeat every
+  **1 s** (controller `0x03`, robot `0x82`). Any valid frame refreshes the link.
+- **Link loss** — if no valid frame arrives for **3 s** while `Active`, the
+  endpoint transitions to `Lost` and notifies via the state callback; the next
+  valid frame returns it to `Active`.
+- **Failsafe on the robot** — if no valid command is received within **500 ms**,
   velocity is forced to zero. `EmergencyStop` latches regardless of traffic.
 - Uplink telemetry: base 200 Hz, arm joints 50 Hz (round-robin), status 1 Hz.
+- The controller only transmits commands while `Active`.
 
 ---
 
@@ -242,6 +253,8 @@ Joint targets are clamped to per-joint `[min, max]` before being applied.
 | RTO | 30 ms |
 | Max retries | 5 |
 | Failsafe timeout | 500 ms |
+| Heartbeat interval | 1 s |
+| Link timeout | 3 s |
 | Downlink rate | 100 Hz |
 | Uplink rate | 200 Hz |
 
@@ -249,7 +262,8 @@ Joint targets are clamped to per-joint `[min, max]` before being applied.
 
 ## 14. Open items
 
-- Session authentication / encryption (keys, replay protection).
-- `EventLog` / `SetParam` / `SetArmMode` payload definitions.
-- Fragment reassembly strategy under severe loss.
+- Session authentication / encryption (keys, replay protection) — `nonce` and
+  `capabilities` fields are reserved for this.
+- Fragment reassembly strategy under severe loss (`FRAG_START`/`FRAG_MORE`).
+- Multi-robot addressing (currently one C ↔ one D).
 - Multi-robot addressing (currently one C ↔ one D).

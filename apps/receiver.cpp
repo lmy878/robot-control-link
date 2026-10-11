@@ -56,6 +56,13 @@ int main(int argc, char** argv) {
     std::printf("receiver: bind=%u peer=%s:%u\n", bind_port, peer_ip.c_str(), peer_port);
 
     Endpoint ep(t);
+    ep.setDeviceId(0x524F424Fu);       // "ROBO"
+    ep.setHeartbeatInterval(std::chrono::milliseconds(1000));
+    ep.setLinkTimeout(std::chrono::milliseconds(3000));
+    ep.onState([](Endpoint::ConnState s) {
+        static const char* names[] = {"Idle", "Connecting", "Active", "Lost"};
+        std::printf("receiver: link state -> %s\n", names[int(s)]);
+    });
     RobotState rs;
     rs.last_cmd = clk::now();
 

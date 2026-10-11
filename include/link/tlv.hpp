@@ -12,6 +12,7 @@ public:
 
     bool u8v (u8 tag, u8 v)  { return raw(tag, &v, 1); }
     bool u16v(u8 tag, u16 v) { u8 t[2]; putU16(t, v); return raw(tag, t, 2); }
+    bool u32v(u8 tag, u32 v) { u8 t[4]; putU32(t, v); return raw(tag, t, 4); }
     bool f32v(u8 tag, f32 v) { u8 t[4]; putF32(t, v); return raw(tag, t, 4); }
 
     bool bytes(u8 tag, const u8* d, std::size_t n) { return raw(tag, d, n); }
@@ -60,6 +61,7 @@ public:
 
     static bool asU8 (const u8* v, std::size_t n, u8& o)  { if (n < 1) return false; o = v[0]; return true; }
     static bool asU16(const u8* v, std::size_t n, u16& o) { if (n < 2) return false; o = getU16(v); return true; }
+    static bool asU32(const u8* v, std::size_t n, u32& o) { if (n < 4) return false; o = getU32(v); return true; }
     static bool asF32(const u8* v, std::size_t n, f32& o) { if (n < 4) return false; o = getF32(v); return true; }
 
 private:

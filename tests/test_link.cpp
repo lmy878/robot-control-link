@@ -119,6 +119,58 @@ static void testMessages() {
     CHECK(bto.wz == 6 && bto.battery == 77);
 }
 
+static void testMessages2() {
+    u8 buf[128];
+
+    ArmMode am{1, 3};
+    std::size_t n = encodeArmMode(am, buf, sizeof(buf));
+    ArmMode amo;
+    CHECK(n && decodeArmMode(buf, n, amo) && amo.arm_id == 1 && amo.mode == 3);
+
+    ParamSet ps{0x1234, 9.5f};
+    n = encodeParamSet(ps, buf, sizeof(buf));
+    ParamSet pso;
+    CHECK(n && decodeParamSet(buf, n, pso) && pso.param_id == 0x1234 && pso.value == 9.5f);
+
+    EventLog el; el.level = 2; el.text_len = 5;
+    std::memcpy(el.text, "hello", 5);
+    n = encodeEventLog(el, buf, sizeof(buf));
+    EventLog elo;
+    CHECK(n && decodeEventLog(buf, n, elo));
+    CHECK(elo.level == 2 && elo.text_len == 5 && std::memcmp(elo.text, "hello", 5) == 0);
+
+    ConnectReqMsg cq{1, 0xDEADBEEF, 0xCAFE};
+    n = encodeConnectReq(cq, buf, sizeof(buf));
+    ConnectReqMsg cqo;
+    CHECK(n && decodeConnectReq(buf, n, cqo));
+    CHECK(cqo.device_id == 0xDEADBEEF && cqo.nonce == 0xCAFE);
+
+    ConnectAckMsg ca{0x01020304, 0, 0x0001};
+    n = encodeConnectAck(ca, buf, sizeof(buf));
+    ConnectAckMsg cao;
+    CHECK(n && decodeConnectAck(buf, n, cao));
+    CHECK(cao.session_id == 0x01020304 && cao.capabilities == 0x0001);
+}
+
+static void testSession() {
+    FakeTransport ta, tb;
+    Endpoint a(ta), b(tb);
+    b.setDeviceId(0x1234);
+
+    a.beginConnect(0xCAFEBABE);
+    CHECK(a.connState() == Endpoint::ConnState::Connecting);
+
+    pump(ta, tb);                       // ConnectReq -> robot
+    b.poll(0);                          // robot replies with ConnectAck
+    CHECK(b.connState() == Endpoint::ConnState::Active);
+
+    pump(tb, ta);                       // ConnectAck -> controller
+    a.poll(0);                          // controller goes active
+    CHECK(a.connState() == Endpoint::ConnState::Active);
+    CHECK(a.sessionId() == 0xCAFEBABE);
+    CHECK(b.sessionId() == 0xCAFEBABE);
+}
+
 static void testArq() {
     FakeTransport ta, tb;
     Endpoint a(ta), b(tb);
@@ -187,9 +239,11 @@ int main() {
     testFrame();
     testTlv();
     testMessages();
+    testMessages2();
     testArq();
     testRetransmit();
     testKinematics();
+    testSession();
 
     if (g_fail) { std::printf("%d CHECK(s) failed\n", g_fail); return 1; }
     std::printf("all tests passed\n");

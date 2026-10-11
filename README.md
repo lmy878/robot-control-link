@@ -62,9 +62,12 @@ uplink stays purely best-effort and the 200 Hz budget is preserved.
 
 - 16-byte header: magic, version, type, flags, stream, seq, ack, len, header CRC.
 - TLV payloads (forward compatible, unknown tags skipped).
-- Downlink: `SetVelocity`, `MoveOrder`, `Stop`, `EmergencyStop`, `SetArmJoints`
+- Session: `ConnectReq`/`ConnectAck` handshake, 1 Hz heartbeats, link-loss
+  detection (`Idle → Connecting → Active ⇄ Lost`).
+- Downlink: `SetVelocity`, `MoveOrder`, `Stop`, `EmergencyStop`, `SetArmJoints`,
+  `SetArmPose`, `SetArmMode`, `SetParam`
   — reliable via ACK + retransmit, deduplicated by sequence number.
-- Uplink: `TelemetryBase`, `TelemetryArm`, `Status` — FEC-only.
+- Uplink: `TelemetryBase`, `TelemetryArm`, `Status`, `EventLog` — FEC-only.
 - Robot failsafe: auto-stop after 500 ms without a valid command.
 
 ## License
