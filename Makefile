@@ -9,7 +9,7 @@ LIB_OBJS := $(patsubst src/%.cpp,$(BUILD)/%.o,$(LIB_SRCS))
 
 .PHONY: all clean test
 
-all: $(BUILD)/sender $(BUILD)/receiver $(BUILD)/test_link
+all: $(BUILD)/sender $(BUILD)/receiver $(BUILD)/controller $(BUILD)/robot_node $(BUILD)/test_link
 
 $(BUILD):
 	mkdir -p $(BUILD)
@@ -21,6 +21,12 @@ $(BUILD)/sender: apps/sender.cpp $(LIB_OBJS) | $(BUILD)
 	$(CXX) $(CXXFLAGS) $< $(LIB_OBJS) -o $@ $(LDFLAGS)
 
 $(BUILD)/receiver: apps/receiver.cpp $(LIB_OBJS) | $(BUILD)
+	$(CXX) $(CXXFLAGS) $< $(LIB_OBJS) -o $@ $(LDFLAGS)
+
+$(BUILD)/controller: apps/controller.cpp $(LIB_OBJS) | $(BUILD)
+	$(CXX) $(CXXFLAGS) $< $(LIB_OBJS) -o $@ $(LDFLAGS)
+
+$(BUILD)/robot_node: apps/robot_node.cpp $(LIB_OBJS) | $(BUILD)
 	$(CXX) $(CXXFLAGS) $< $(LIB_OBJS) -o $@ $(LDFLAGS)
 
 $(BUILD)/test_link: tests/test_link.cpp $(LIB_OBJS) | $(BUILD)

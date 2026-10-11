@@ -54,7 +54,9 @@ public:
 
     // ---- session / link monitoring ----
     void beginConnect(u32 nonce = 0);              // controller initiates handshake
-    void setDeviceId(u32 id) { device_id_ = id; }  // robot identity
+    void setDeviceId(u32 id) { device_id_ = id; session_enabled_ = true; } // robot identity
+    bool sessionEnabled() const { return session_enabled_; }
+    void setSessionEnabled(bool on) { session_enabled_ = on; }
     ConnState connState() const { return conn_state_; }
     u32 sessionId() const { return session_id_; }
     void setHeartbeatInterval(std::chrono::milliseconds v) { hb_interval_ = v; }
@@ -78,10 +80,10 @@ private:
     Handler on_msg_;
     AckHandler on_ack_;
 
-    u16 seq_ctr_[StreamCount] = {0, 0, 0};
-    u16 last_rx_[StreamCount] = {0, 0, 0};
-    u64 win_[StreamCount]     = {0, 0, 0};
-    bool have_rx_[StreamCount] = {false, false, false};
+    u16 seq_ctr_[StreamCount] = {0, 0, 0, 0};
+    u16 last_rx_[StreamCount] = {0, 0, 0, 0};
+    u64 win_[StreamCount]     = {0, 0, 0, 0};
+    bool have_rx_[StreamCount] = {false, false, false, false};
 
     std::map<u16, Pending> pending_;   // keyed by command seq (control stream)
     std::mutex mtx_;
@@ -92,6 +94,7 @@ private:
     // session state
     ConnState conn_state_ = ConnState::Idle;
     StateHandler on_state_;
+    bool session_enabled_ = false;   // paused by default
     bool is_controller_ = false;
     u32 device_id_ = 0;
     u32 session_id_ = 0;

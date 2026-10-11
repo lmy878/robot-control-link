@@ -10,10 +10,10 @@ See [`docs/PROTOCOL.md`](docs/PROTOCOL.md) for the full protocol specification.
 
 ```
 include/link/   protocol headers (common, crc, frame, tlv, messages,
-                transport, endpoint, kinematics)
+                transport, endpoint, kinematics, control, telemetry)
 src/            implementation
-apps/           sender (controller) and receiver (robot) demo programs
-tests/          unit + ARQ tests
+apps/           robot_node (Jetson), controller (RPi), + sender/receiver demo
+tests/          unit + ARQ + session + packet + priority tests
 docs/           PROTOCOL.md
 ```
 
@@ -28,16 +28,38 @@ Requires only `g++` (C++17) and `make`.
 
 ## Run (loopback, no radio)
 
-`sender` binds 5601 and targets 5600; `receiver` binds 5600 and targets 5601.
+Two modes are provided.
+
+**Application mode (main task)** — Jetson robot node + RPi controller:
 
 ```sh
-./build/receiver &            # robot side
-./build/sender                # controller side, Ctrl-C to stop
+./build/robot_node &     # binds 5600, sends 200 Hz / 340 B telemetry
+./build/controller       # binds 5601, sends 100 Hz control packets
 ```
 
-Expected: the robot logs decoded `CMD move ...` orders and wheel speeds; the
-controller logs `TELEM ...` and `STATUS ...`, with `acked` counting commands and
-`pending` staying near zero.
+**Demo mode** — the older ACK-per-command sender/receiver pair:
+
+```sh
+./build/receiver &       # binds 5600
+./build/sender           # binds 5601
+```
+
+In application mode you should see the controller report `telem=200.0Hz` with a
+growing `acked` count, and occasional `robot log[...]` debug lines.
+
+## Application packets (main task)
+
+- `ControlPacket` — downlink, **168 B**, control stream (highest priority),
+  reliable (ACK + retransmit), sent by the controller at 100 Hz.
+- `TelemetryPacket` — uplink, **340 B**, telemetry stream, best-effort
+  (FEC-only), sent by the robot at 200 Hz.
+- `Debug` stream carries `EventLog` at the **lowest priority**; on receive,
+  endpoints dispatch control first, debug last.
+- **Session features are paused** (`beginConnect`/`setDeviceId` are not called;
+  `session_enabled_` stays false).
+
+Defined in `include/link/control.hpp` and `include/link/telemetry.hpp`
+(`#pragma pack(1)` + `static_assert` on exact size).
 
 ## WFB-ng integration
 

@@ -88,14 +88,23 @@ version, length, or either CRC are silently dropped.
 
 ---
 
-## 5. Streams and sequence spaces
+## 5. Streams, sequence spaces and priority
 
 Each `StreamId` has its **own 16-bit wrapping sequence counter**, independent of
 direction:
 
-- **Control (0)** — downlink commands and their ACKs.
-- **Telemetry (1)** — uplink telemetry.
-- **Session (2)** — connect / heartbeat / status.
+| StreamId | Name | Direction | Priority |
+|---------:|------|-----------|----------|
+| 0 | Control | downlink commands + their ACKs | **highest** |
+| 1 | Telemetry | uplink telemetry | high |
+| 2 | Debug | either direction (logs) | **lowest** |
+| 3 | Session | connect / heartbeat / status | (paused) |
+
+On receive, an endpoint drains all pending frames and dispatches them
+**highest-priority first** (control → telemetry → session → debug), so a burst
+of debug traffic can never delay a control command. Session features are
+**paused** in the current build (`session_enabled_` is off unless
+`beginConnect`/`setDeviceId` is called).
 
 A single frame may both carry a new message and piggyback `AckSeq` for the
 opposite direction.
@@ -134,6 +143,7 @@ breaking older peers. Values may be `u8`, `u16`, `f32`, or arrays of `f32`.
 | `0x15` | `SetArmPose` | `1=arm_id u8`, `2..7 = x,y,z,roll,pitch,yaw f32` |
 | `0x16` | `SetArmMode` | `1=arm_id u8`, `2=mode u8` |
 | `0x17` | `SetParam` | `1=param_id u16`, `2=value f32` |
+| `0x18` | `ControlCmd` | fixed-size `ControlPacket` (see §7.3) |
 
 `MoveOrder.dir`: `0` forward, `1` backward, `2` strafe-left, `3` strafe-right,
 `4` rotate-left, `5` rotate-right, `6` stop. `speed` is `0..255`.
@@ -150,6 +160,66 @@ breaking older peers. Values may be `u8`, `u16`, `f32`, or arrays of `f32`.
 | `0x86` | `Ack` | `1=ack_seq u16`, `2=status u8` |
 | `0x87` | `Nack` | `1=ack_seq u16`, `2=reason u8` |
 | `0x88` | `EventLog` | `1=level u8`, `2=text bytes` |
+| `0x89` | `Telemetry` | fixed-size `TelemetryPacket` (see §7.3) |
+
+### 7.3 Fixed-size application packets
+
+The primary motion path uses two **packed, fixed-size** structs copied verbatim
+as the frame payload (both peers are little-endian SoCs). They are defined in
+`include/link/control.hpp` and `include/link/telemetry.hpp`.
+
+**`ControlPacket` (downlink, 168 bytes)** — sent by the controller at 100 Hz on
+the control stream, reliably:
+
+| Off | Type | Field |
+|----:|------|-------|
+| 0 | u16 | magic `0x4354` |
+| 2 | u16 | size `168` |
+| 4 | u32 | seq |
+| 8 | u64 | timestamp_us |
+| 16 | f32[3] | vel: vx, vy, wz |
+| 28 | u8 | arm_count |
+| 29 | u8 | arm_dof |
+| 30 | u16 | flags |
+| 32 | f32[4][6] | arm_joints (rad) |
+| 128 | u16 | command |
+| 130 | u8 | mode |
+| 131 | u8 | estop |
+| 132 | u8[36] | reserved |
+
+**`TelemetryPacket` (uplink, 340 bytes)** — sent by the robot at 200 Hz on the
+telemetry stream, best-effort (FEC-only):
+
+| Off | Type | Field |
+|----:|------|-------|
+| 0 | u16 | magic `0x544D` |
+| 2 | u16 | size `340` |
+| 4 | u32 | seq |
+| 8 | u64 | timestamp_us |
+| 16 | f32[3] | pos x,y,z (m) |
+| 28 | f32[3] | vel vx,vy,vz (m/s) |
+| 40 | f32[3] | rpy roll,pitch,yaw (rad) |
+| 52 | f32[3] | ang_vel wx,wy,wz (rad/s) |
+| 64 | f32[3] | accel ax,ay,az (m/s²) |
+| 76 | f32 | battery_v (V) |
+| 80 | f32 | battery_i (A) |
+| 84 | f32[8] | temps (°C) |
+| 116 | u8 | arm_count |
+| 117 | u8 | arm_dof |
+| 118 | u16 | status_flags |
+| 120 | f32[4][6] | arm_joints (rad) |
+| 216 | f32[6] | motor_current (A) |
+| 240 | f32[6] | motor_rpm |
+| 264 | u32 | faults |
+| 268 | f32 | cpu_load (%) |
+| 272 | f32 | mem_used_mb |
+| 276 | f32 | loop_rate_hz |
+| 280 | u32 | uptime_ms |
+| 284 | u8 | mode |
+| 285 | u8 | estop |
+| 286 | u8[54] | reserved |
+
+Both structs are `#pragma pack(1)` with `static_assert(sizeof == size)`.
 
 ---
 
@@ -257,6 +327,8 @@ Joint targets are clamped to per-joint `[min, max]` before being applied.
 | Link timeout | 3 s |
 | Downlink rate | 100 Hz |
 | Uplink rate | 200 Hz |
+| ControlPacket size | 168 bytes |
+| TelemetryPacket size | 340 bytes |
 
 ---
 

@@ -75,13 +75,26 @@ u16 Endpoint::sendReliable(MsgType type, StreamId stream, const u8* payload, std
 }
 
 void Endpoint::poll(int timeout_ms) {
+    // Receive everything available, then dispatch in stream-priority order:
+    // control (highest) first, debug (lowest) last.
+    struct Item {
+        int prio;
+        FrameHeader h;
+        std::size_t len;
+        u8 payload[kMaxPayload];
+    };
+    static constexpr std::size_t kMaxBatch = 32;
+    Item items[kMaxBatch];
+    std::size_t count = 0;
+
     u8 buf[kMaxFrame];
     for (;;) {
         int n = t_.recv(buf, sizeof(buf), timeout_ms);
-        if (n <= 0) return;
+        if (n <= 0) break;
 
         FrameHeader h;
         if (!decodeHeader(buf, static_cast<std::size_t>(n), h)) continue;
+        timeout_ms = 0; // got one frame: drain the rest without blocking
 
         const u8* pl = buf + kHeaderSize;
         std::size_t plen = h.payload_len;
@@ -96,7 +109,7 @@ void Endpoint::poll(int timeout_ms) {
         last_rx_time_ = std::chrono::steady_clock::now();
         if (conn_state_ == ConnState::Lost) setState(ConnState::Active);
 
-        // ACK / NACK handling
+        // ACK / NACK handling (control stream semantics -> immediate).
         if (h.flags & FlagIsAck) {
             {
                 std::lock_guard<std::mutex> lk(mtx_);
@@ -112,23 +125,46 @@ void Endpoint::poll(int timeout_ms) {
         bool dup = isDuplicate(static_cast<StreamId>(h.stream_id), h.seq);
         if (dup) {
             if (h.flags & FlagAckReq) sendAckFor(h.seq, 0);
-            timeout_ms = 0;
             continue;
         }
 
         if (h.flags & FlagAckReq) sendAckFor(h.seq, 0);
-        handleSession(h, pl, plen);
-        if (on_msg_) on_msg_(h, pl, plen);
 
-        timeout_ms = 0; // drain any queued frames
+        if (count < kMaxBatch && plen <= kMaxPayload) {
+            Item& it = items[count++];
+            it.prio = streamPriority(static_cast<StreamId>(h.stream_id));
+            it.h = h;
+            it.len = plen;
+            if (plen) std::memcpy(it.payload, pl, plen);
+        } else {
+            // batch full: deliver immediately (still correct, just unordered)
+            handleSession(h, pl, plen);
+            if (on_msg_) on_msg_(h, pl, plen);
+        }
+    }
+
+    // Stable insertion sort by priority (lowest number = highest priority).
+    for (std::size_t i = 1; i < count; ++i) {
+        Item key = items[i];
+        std::size_t j = i;
+        while (j > 0 && items[j - 1].prio > key.prio) {
+            items[j] = items[j - 1];
+            --j;
+        }
+        items[j] = key;
+    }
+
+    for (std::size_t i = 0; i < count; ++i) {
+        handleSession(items[i].h, items[i].payload, items[i].len);
+        if (on_msg_) on_msg_(items[i].h, items[i].payload, items[i].len);
     }
 }
 
 void Endpoint::tick() {
     auto now = std::chrono::steady_clock::now();
 
-    // Session housekeeping: heartbeat + link timeout.
-    if (conn_state_ != ConnState::Idle) {
+    // Session housekeeping: heartbeat + link timeout (paused unless enabled).
+    if (session_enabled_ && conn_state_ != ConnState::Idle) {
         if (now >= next_hb_time_) {
             if (conn_state_ == ConnState::Connecting) beginConnect(nonce_);
             else sendHeartbeat();
@@ -187,6 +223,7 @@ void Endpoint::setState(ConnState s) {
 }
 
 void Endpoint::beginConnect(u32 nonce) {
+    session_enabled_ = true;
     is_controller_ = true;
     nonce_ = nonce;
     u8 pl[16];
@@ -206,6 +243,7 @@ void Endpoint::sendHeartbeat() {
 }
 
 void Endpoint::handleSession(const FrameHeader& h, const u8* pl, std::size_t n) {
+    if (!session_enabled_) return;   // session features paused
     switch (MsgType(h.msg_type)) {
         case MsgType::ConnectReq: {
             if (is_controller_) break;                // only the robot answers

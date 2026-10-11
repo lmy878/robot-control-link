@@ -53,6 +53,7 @@ enum class MsgType : u8 {
     SetArmPose    = 0x15,
     SetArmMode    = 0x16,
     SetParam      = 0x17,
+    ControlCmd    = 0x18,   // fixed-size ControlPacket
     // ---- uplink (robot -> controller), 0x80..0xFF ----
     ConnectAck    = 0x81,
     HeartbeatUp   = 0x82,
@@ -62,6 +63,7 @@ enum class MsgType : u8 {
     Ack           = 0x86,
     Nack          = 0x87,
     EventLog      = 0x88,
+    Telemetry     = 0x89,   // fixed-size TelemetryPacket
 };
 
 inline bool isDownlink(MsgType t) { return u8(t) <= 0x7F; }
@@ -78,11 +80,23 @@ enum Flags : u8 {
 };
 
 enum StreamId : u8 {
-    StreamControl   = 0,
+    StreamControl   = 0,   // highest priority
     StreamTelemetry = 1,
-    StreamSession   = 2,
-    StreamCount     = 3,
+    StreamDebug     = 2,   // lowest priority
+    StreamSession   = 3,
+    StreamCount     = 4,
 };
+
+// Lower number = higher priority. Control is highest, debug lowest.
+inline int streamPriority(StreamId s) {
+    switch (s) {
+        case StreamControl:   return 0;
+        case StreamTelemetry: return 1;
+        case StreamSession:   return 2;
+        case StreamDebug:     return 3;
+        default:              return 3;
+    }
+}
 
 enum class MoveDir : u8 {
     Forward = 0, Backward = 1, StrafeLeft = 2,

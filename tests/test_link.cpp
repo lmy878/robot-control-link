@@ -4,11 +4,13 @@
 #include <thread>
 #include <vector>
 
+#include "link/control.hpp"
 #include "link/crc.hpp"
 #include "link/endpoint.hpp"
 #include "link/frame.hpp"
 #include "link/kinematics.hpp"
 #include "link/messages.hpp"
+#include "link/telemetry.hpp"
 #include "link/tlv.hpp"
 
 using namespace robotlink;
@@ -152,8 +154,7 @@ static void testMessages2() {
     CHECK(cao.session_id == 0x01020304 && cao.capabilities == 0x0001);
 }
 
-static void testSession() {
-    FakeTransport ta, tb;
+static void testSession() {    FakeTransport ta, tb;
     Endpoint a(ta), b(tb);
     b.setDeviceId(0x1234);
 
@@ -169,6 +170,67 @@ static void testSession() {
     CHECK(a.connState() == Endpoint::ConnState::Active);
     CHECK(a.sessionId() == 0xCAFEBABE);
     CHECK(b.sessionId() == 0xCAFEBABE);
+}
+
+static void testPackets() {
+    CHECK(sizeof(TelemetryPacket) == kTelemetrySize);
+    CHECK(kTelemetrySize == 340);
+    CHECK(sizeof(ControlPacket) == kControlSize);
+
+    TelemetryPacket tp{};
+    tp.magic = kTelemetryMagic;
+    tp.size = u16(kTelemetrySize);
+    tp.seq = 7;
+    tp.timestamp_us = 123456789ull;
+    tp.battery_v = 24.5f;
+    tp.arm_count = 4;
+    tp.arm_dof = 6;
+    tp.arm_joints[2][3] = 1.25f;
+    u8 buf[kTelemetrySize];
+    CHECK(encodeTelemetry(tp, buf, sizeof(buf)) == kTelemetrySize);
+    TelemetryPacket to{};
+    CHECK(decodeTelemetry(buf, kTelemetrySize, to));
+    CHECK(to.seq == 7 && to.battery_v == 24.5f && to.arm_joints[2][3] == 1.25f);
+
+    buf[0] ^= 0xFF;                                   // break magic
+    CHECK(!decodeTelemetry(buf, kTelemetrySize, to));
+    CHECK(!decodeTelemetry(buf, kTelemetrySize - 1, to)); // wrong length
+
+    ControlPacket cp{};
+    cp.magic = kControlMagic;
+    cp.size = u16(kControlSize);
+    cp.seq = 9;
+    cp.vel[0] = -0.5f;
+    cp.command = 1;
+    cp.estop = 1;
+    u8 cbuf[kControlSize];
+    CHECK(encodeControl(cp, cbuf, sizeof(cbuf)) == kControlSize);
+    ControlPacket co{};
+    CHECK(decodeControl(cbuf, kControlSize, co));
+    CHECK(co.seq == 9 && co.vel[0] == -0.5f && co.estop == 1);
+}
+
+static void testPriority() {
+    FakeTransport ta, tb;
+    Endpoint a(ta), b(tb);
+
+    std::vector<int> order;
+    b.onMessage([&](const FrameHeader& h, const u8*, std::size_t) {
+        order.push_back(h.stream_id);
+    });
+
+    u8 pl[4] = {1, 2, 3, 4};
+    a.send(MsgType::EventLog, StreamDebug, pl, sizeof(pl));       // lowest
+    a.send(MsgType::Telemetry, StreamTelemetry, pl, sizeof(pl));  // middle
+    a.send(MsgType::ControlCmd, StreamControl, pl, sizeof(pl));   // highest
+
+    pump(ta, tb);   // all three arrive in send order (debug first)
+    b.poll(0);
+
+    CHECK(order.size() == 3);
+    CHECK(order[0] == StreamControl);
+    CHECK(order[1] == StreamTelemetry);
+    CHECK(order[2] == StreamDebug);
 }
 
 static void testArq() {
@@ -244,6 +306,8 @@ int main() {
     testRetransmit();
     testKinematics();
     testSession();
+    testPackets();
+    testPriority();
 
     if (g_fail) { std::printf("%d CHECK(s) failed\n", g_fail); return 1; }
     std::printf("all tests passed\n");
