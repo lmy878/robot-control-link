@@ -1,6 +1,8 @@
-// Robot node (Jetson): 200 Hz uplink telemetry (340-byte packet) + downlink
-// control parsing. Control stream is highest priority, debug lowest.
-// Session features are intentionally disabled.
+// Robot node (Jetson): 200 Hz uplink telemetry (5 quaternions + 15 laser +
+// 50 states = 340-byte packet) and downlink control parsing (joystick + estop +
+// mode). Control stream is highest priority, debug lowest. Session disabled.
+//
+// Telemetry is filled with VIRTUAL data for now.
 //
 // Usage: robot_node [peer_ip] [peer_port] [bind_port]
 //   defaults: 127.0.0.1  5601  5600
@@ -18,7 +20,6 @@
 
 #include "link/control.hpp"
 #include "link/endpoint.hpp"
-#include "link/kinematics.hpp"
 #include "link/messages.hpp"
 #include "link/telemetry.hpp"
 #include "link/transport.hpp"
@@ -37,13 +38,33 @@ static void tryRealtime() {
 }
 
 struct RobotState {
-    f32 vel[3]{};                 // commanded vx, vy, wz
-    f32 joints[4][6]{};           // commanded joint targets
-    u8  arm_count = 4;
-    u8  arm_dof = 6;
+    f32 joystick[kJoystickAxes]{};   // last commanded axes
+    u8  mode = 0;
     bool estop = false;
     clk::time_point last_ctl;
 };
+
+// ---- virtual telemetry generation (replace with real sensor reads) ----
+static void fillVirtualTelemetry(TelemetryPacket& tp, const RobotState& rs, double t) {
+    // base + 4 arms orientations as quaternions (w, x, y, z)
+    tp.quaternions[0][0] = f32(std::cos(0.5 * rs.joystick[3]));
+    tp.quaternions[0][1] = 0.0f;
+    tp.quaternions[0][2] = 0.0f;
+    tp.quaternions[0][3] = f32(std::sin(0.5 * rs.joystick[3]));
+    for (int a = 1; a < kQuatCount; ++a) {
+        f32 ang = f32(0.3 * std::sin(t + a));
+        tp.quaternions[a][0] = f32(std::cos(0.5 * ang));
+        tp.quaternions[a][1] = f32(std::sin(0.5 * ang));
+        tp.quaternions[a][2] = 0.0f;
+        tp.quaternions[a][3] = 0.0f;
+    }
+    // 15 laser range measurements
+    for (int i = 0; i < kLaserCount; ++i)
+        tp.laser[i] = f32(5.0 + 2.0 * std::sin(t + 0.4 * i));
+    // 50 robot states
+    for (int i = 0; i < kStateCount; ++i)
+        tp.states[i] = f32(std::sin(0.3 * t + 0.1 * i));
+}
 
 int main(int argc, char** argv) {
     std::string peer_ip = (argc > 1) ? argv[1] : "127.0.0.1";
@@ -73,28 +94,17 @@ int main(int argc, char** argv) {
                 if (decodeControl(pl, n, cp)) {
                     rs.last_ctl = clk::now();
                     rs.estop = cp.estop != 0;
-                    for (int i = 0; i < 3; ++i) rs.vel[i] = cp.vel[i];
-                    if (cp.arm_count <= 4 && cp.arm_dof <= 6) {
-                        rs.arm_count = cp.arm_count;
-                        rs.arm_dof = cp.arm_dof;
-                        for (u8 a = 0; a < cp.arm_count; ++a)
-                            for (u8 j = 0; j < cp.arm_dof; ++j)
-                                rs.joints[a][j] = cp.arm_joints[a][j];
-                    }
+                    rs.mode = cp.mode;
+                    for (int i = 0; i < kJoystickAxes; ++i) rs.joystick[i] = cp.joystick[i];
                 }
                 break;
             }
-            case MsgType::Stop:
-                rs.estop = false;
-                rs.vel[0] = rs.vel[1] = rs.vel[2] = 0;
-                break;
             case MsgType::EmergencyStop:
                 rs.estop = true;
-                rs.vel[0] = rs.vel[1] = rs.vel[2] = 0;
                 std::printf("robot_node: EMERGENCY STOP\n");
                 break;
             default:
-                break;   // debug/other handled at lowest priority
+                break;
         }
     });
 
@@ -103,40 +113,23 @@ int main(int argc, char** argv) {
     const auto start = clk::now();
     auto next = start;
     auto next_dbg = start;
-    u32 seq = 0;
 
     while (g_run) {
         next += std::chrono::milliseconds(5);   // 200 Hz uplink
 
-        ep.poll(0);      // <-- control stream dispatched before debug
-        ep.tick();       // ARQ timers
+        ep.poll(0);      // control stream dispatched before debug
+        ep.tick();
 
-        // Failsafe: stop if control is silent.
-        if (!rs.estop && clk::now() - rs.last_ctl > failsafe) {
-            rs.vel[0] = rs.vel[1] = rs.vel[2] = 0;
+        // Failsafe: zero the sticks if control goes silent.
+        if (clk::now() - rs.last_ctl > failsafe) {
+            for (int i = 0; i < kJoystickAxes; ++i) rs.joystick[i] = 0;
         }
 
-        // ---- build + transmit 340-byte telemetry packet ----
         auto now = clk::now();
-        TelemetryPacket tp{};
-        tp.magic = kTelemetryMagic;
-        tp.size = u16(kTelemetrySize);
-        tp.seq = seq++;
-        tp.timestamp_us = u64(std::chrono::duration_cast<std::chrono::microseconds>(now - start).count());
-        tp.pos[0] = tp.pos[1] = tp.pos[2] = 0;
-        tp.vel[0] = rs.vel[0]; tp.vel[1] = rs.vel[1]; tp.vel[2] = 0;
-        tp.rpy[2] = rs.vel[2];                 // yaw command as stand-in
-        tp.battery_v = 24.0f; tp.battery_i = 3.5f;
-        tp.arm_count = rs.arm_count;
-        tp.arm_dof = rs.arm_dof;
-        tp.status_flags = rs.estop ? 0u : 1u;
-        for (u8 a = 0; a < 4; ++a)
-            for (u8 j = 0; j < 6; ++j) tp.arm_joints[a][j] = rs.joints[a][j];
-        tp.mode = rs.estop ? 2 : 1;
-        tp.estop = rs.estop ? 1 : 0;
-        tp.uptime_ms = u32(std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count());
-        tp.loop_rate_hz = 200.0f;
+        double tel = std::chrono::duration<double>(now - start).count();
 
+        TelemetryPacket tp{};
+        fillVirtualTelemetry(tp, rs, tel);
         u8 pl[kTelemetrySize];
         std::size_t n = encodeTelemetry(tp, pl, sizeof(pl));
         if (n) ep.send(MsgType::Telemetry, StreamTelemetry, pl, n);
@@ -146,8 +139,8 @@ int main(int argc, char** argv) {
             next_dbg += std::chrono::milliseconds(1000);
             EventLog el;
             el.level = 1;
-            const char* msg = rs.estop ? "estop" : (rs.vel[0] || rs.vel[1] || rs.vel[2] ? "moving" : "idle");
-            std::snprintf(reinterpret_cast<char*>(el.text), sizeof(el.text), "robot %s", msg);
+            std::snprintf(reinterpret_cast<char*>(el.text), sizeof(el.text),
+                          "mode=%u estop=%u", rs.mode, rs.estop ? 1 : 0);
             el.text_len = u8(std::strlen(reinterpret_cast<char*>(el.text)));
             u8 dbg[80];
             std::size_t dn = encodeEventLog(el, dbg, sizeof(dbg));

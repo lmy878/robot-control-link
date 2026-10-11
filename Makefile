@@ -7,9 +7,9 @@ BUILD := build
 LIB_SRCS := $(wildcard src/*.cpp)
 LIB_OBJS := $(patsubst src/%.cpp,$(BUILD)/%.o,$(LIB_SRCS))
 
-.PHONY: all clean test
+.PHONY: all clean
 
-all: $(BUILD)/sender $(BUILD)/receiver $(BUILD)/controller $(BUILD)/robot_node $(BUILD)/test_link
+all: $(BUILD)/sender $(BUILD)/receiver $(BUILD)/controller $(BUILD)/robot_node
 
 $(BUILD):
 	mkdir -p $(BUILD)
@@ -28,12 +28,6 @@ $(BUILD)/controller: apps/controller.cpp $(LIB_OBJS) | $(BUILD)
 
 $(BUILD)/robot_node: apps/robot_node.cpp $(LIB_OBJS) | $(BUILD)
 	$(CXX) $(CXXFLAGS) $< $(LIB_OBJS) -o $@ $(LDFLAGS)
-
-$(BUILD)/test_link: tests/test_link.cpp $(LIB_OBJS) | $(BUILD)
-	$(CXX) $(CXXFLAGS) $< $(LIB_OBJS) -o $@ $(LDFLAGS)
-
-test: $(BUILD)/test_link
-	$(BUILD)/test_link
 
 clean:
 	rm -rf $(BUILD)

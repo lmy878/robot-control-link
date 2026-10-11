@@ -1,5 +1,6 @@
-// Controller (RPi): 100 Hz downlink control packets (reliable, control stream)
-// + uplink telemetry receive/parse (340-byte packet). Session disabled.
+// Controller (RPi): 100 Hz downlink control (joystick + estop + mode, reliable
+// on the control stream) and uplink telemetry receive/parse (5 quaternions +
+// 15 laser + 50 states = 340-byte packet). Session disabled.
 //
 // Usage: controller [peer_ip] [peer_port] [bind_port]
 //   defaults: 127.0.0.1  5600  5601
@@ -70,8 +71,9 @@ int main(int argc, char** argv) {
     const auto start = clk::now();
     auto next = start;
     auto next_print = start;
-    u32 cmd_seq = 0;
     const unsigned in_flight_limit = 8;
+    u8 mode = 1;
+    u8 estop = 0;
 
     while (g_run) {
         next += std::chrono::milliseconds(10);   // 100 Hz downlink
@@ -79,21 +81,13 @@ int main(int argc, char** argv) {
         // ---- build + send control packet (highest priority stream) ----
         double phase = std::chrono::duration<double>(clk::now() - start).count();
         ControlPacket cp{};
-        cp.magic = kControlMagic;
-        cp.size = u16(kControlSize);
-        cp.seq = cmd_seq++;
-        cp.timestamp_us = u64(std::chrono::duration_cast<std::chrono::microseconds>(clk::now() - start).count());
-        cp.vel[0] = 0.5f * f32(std::sin(phase));
-        cp.vel[1] = 0.5f * f32(std::cos(phase));
-        cp.vel[2] = 0.3f * f32(std::sin(0.5 * phase));
-        cp.arm_count = 4;
-        cp.arm_dof = 6;
-        cp.command = 1;              // move
-        cp.mode = 1;
-        cp.estop = 0;
-        for (u8 a = 0; a < 4; ++a)
-            for (u8 j = 0; j < 6; ++j)
-                cp.arm_joints[a][j] = 0.2f * f32(std::sin(phase + a + j));
+        cp.joystick[0] = f32(std::sin(phase));        // x
+        cp.joystick[1] = f32(std::cos(phase));        // y
+        cp.joystick[2] = 0.0f;                        // z
+        cp.joystick[3] = f32(0.3 * std::sin(0.5 * phase)); // yaw
+        cp.estop = estop;
+        cp.mode = mode;
+        cp.buttons = 0;
 
         if (ep.pendingCount() < in_flight_limit) {
             u8 pl[kControlSize];
@@ -107,9 +101,11 @@ int main(int argc, char** argv) {
         // ---- status print, ~1 Hz ----
         if (clk::now() >= next_print) {
             next_print += std::chrono::milliseconds(1000);
-            std::printf("ctl: sent=%u acked=%u pending=%zu | telem=%.1fHz seq=%u vel=(%.2f,%.2f,%.2f) batt=%.1fV\n",
-                        cmd_seq, acked.load(), ep.pendingCount(), telem_rx.load() / 1.0,
-                        last.seq, last.vel[0], last.vel[1], last.vel[2], last.battery_v);
+            std::printf("ctl: acked=%u pending=%zu | telem=%.0fHz | quat0=(%.2f,%.2f,%.2f,%.2f) laser0=%.2f state0=%.3f\n",
+                        acked.load(), ep.pendingCount(), double(telem_rx.load()),
+                        last.quaternions[0][0], last.quaternions[0][1],
+                        last.quaternions[0][2], last.quaternions[0][3],
+                        last.laser[0], last.states[0]);
             telem_rx = 0;
         }
 

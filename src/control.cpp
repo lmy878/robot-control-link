@@ -11,7 +11,7 @@ std::size_t encodeControl(const ControlPacket& p, u8* out, std::size_t cap) {
 bool decodeControl(const u8* in, std::size_t len, ControlPacket& p) {
     if (len != kControlSize) return false;
     std::memcpy(&p, in, kControlSize);
-    return p.magic == kControlMagic && p.size == kControlSize;
+    return true;
 }
 
 } // namespace robotlink

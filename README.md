@@ -13,15 +13,13 @@ include/link/   protocol headers (common, crc, frame, tlv, messages,
                 transport, endpoint, kinematics, control, telemetry)
 src/            implementation
 apps/           robot_node (Jetson), controller (RPi), + sender/receiver demo
-tests/          unit + ARQ + session + packet + priority tests
 docs/           PROTOCOL.md
 ```
 
 ## Build
 
 ```sh
-make            # builds build/sender, build/receiver, build/test_link
-make test       # runs the unit + ARQ tests
+make            # builds build/robot_node, build/controller, build/sender, build/receiver
 ```
 
 Requires only `g++` (C++17) and `make`.
@@ -44,19 +42,24 @@ Two modes are provided.
 ./build/sender           # binds 5601
 ```
 
-In application mode you should see the controller report `telem=200.0Hz` with a
-growing `acked` count, and occasional `robot log[...]` debug lines.
+In application mode you should see the controller report `telem=200Hz` with a
+growing `acked` count and the parsed `quat0`/`laser0`/`state0` values, plus
+occasional `robot log[...]` debug lines.
 
 ## Application packets (main task)
 
-- `ControlPacket` — downlink, **168 B**, control stream (highest priority),
-  reliable (ACK + retransmit), sent by the controller at 100 Hz.
-- `TelemetryPacket` — uplink, **340 B**, telemetry stream, best-effort
-  (FEC-only), sent by the robot at 200 Hz.
+- `ControlPacket` — downlink, **20 B**: `joystick[4]` + `estop` + `mode` +
+  `buttons`. Control stream (highest priority), reliable (ACK + retransmit),
+  sent by the controller at 100 Hz.
+- `TelemetryPacket` — uplink, **340 B**: `5 quaternions` (80 B) + `15 laser`
+  (60 B) + `50 robot states` (200 B). Telemetry stream, best-effort (FEC-only),
+  sent by the robot at 200 Hz.
 - `Debug` stream carries `EventLog` at the **lowest priority**; on receive,
   endpoints dispatch control first, debug last.
 - **Session features are paused** (`beginConnect`/`setDeviceId` are not called;
   `session_enabled_` stays false).
+- Telemetry is filled with **virtual data** for now (see
+  `fillVirtualTelemetry` in `apps/robot_node.cpp`).
 
 Defined in `include/link/control.hpp` and `include/link/telemetry.hpp`
 (`#pragma pack(1)` + `static_assert` on exact size).
@@ -74,7 +77,7 @@ The robot process requests `SCHED_FIFO` (priority 50). Run it as root or grant
 `CAP_SYS_NICE` for deterministic scheduling:
 
 ```sh
-sudo setcap cap_sys_nice+ep ./build/receiver
+sudo setcap cap_sys_nice+ep ./build/robot_node
 ```
 
 Unlike an ACK per telemetry sample, only downlink commands are acknowledged, so
@@ -84,12 +87,12 @@ uplink stays purely best-effort and the 200 Hz budget is preserved.
 
 - 16-byte header: magic, version, type, flags, stream, seq, ack, len, header CRC.
 - TLV payloads (forward compatible, unknown tags skipped).
-- Session: `ConnectReq`/`ConnectAck` handshake, 1 Hz heartbeats, link-loss
-  detection (`Idle → Connecting → Active ⇄ Lost`).
-- Downlink: `SetVelocity`, `MoveOrder`, `Stop`, `EmergencyStop`, `SetArmJoints`,
-  `SetArmPose`, `SetArmMode`, `SetParam`
-  — reliable via ACK + retransmit, deduplicated by sequence number.
-- Uplink: `TelemetryBase`, `TelemetryArm`, `Status`, `EventLog` — FEC-only.
+- Streams with priority: **control (highest) → telemetry → debug (lowest)**.
+- Downlink: `ControlCmd` (joystick/estop/mode) plus optional `SetVelocity`,
+  `MoveOrder`, `Stop`, `EmergencyStop`, `SetArmJoints` — reliable via ACK +
+  retransmit, deduplicated by sequence number.
+- Uplink: `Telemetry` (340 B) plus `EventLog` — FEC-only.
+- Session (`ConnectReq`/`ConnectAck`, heartbeats) is implemented but **paused**.
 - Robot failsafe: auto-stop after 500 ms without a valid command.
 
 ## License

@@ -4,30 +4,22 @@
 
 namespace robotlink {
 
-// Downlink application packet: exactly 168 bytes on the wire (little-endian,
-// packed). Sent by the controller at 100 Hz on the control stream.
-constexpr std::size_t kControlSize = 168;
-constexpr u16 kControlMagic = 0x4354; // "CT"
+// Downlink application packet: joystick + emergency stop + robot mode.
+// Sent by the controller at 100 Hz on the control stream (reliable).
+constexpr std::size_t kControlSize = 20;
+constexpr int kJoystickAxes = 4;      // x, y, z (altitude), yaw
 
 #pragma pack(push, 1)
 struct ControlPacket {
-    u16 magic;              // 0   kControlMagic
-    u16 size;               // 2   = kControlSize
-    u32 seq;                // 4
-    u64 timestamp_us;       // 8
-    f32 vel[3];             // 16  vx, vy, wz body velocity (m/s, m/s, rad/s)
-    u8  arm_count;          // 28
-    u8  arm_dof;            // 29
-    u16 flags;              // 30  bitfield (arm enable, etc.)
-    f32 arm_joints[4][6];   // 32  target joint angles (rad)
-    u16 command;            // 128 command id (idle/move/stop/...)
-    u8  mode;               // 130 control mode
-    u8  estop;              // 131 emergency stop (latched by robot)
-    u8  reserved[36];       // 132 -> 168
+    f32 joystick[kJoystickAxes];   // normalized stick axes, [-1, 1]
+    u8  estop;                     // 1 = emergency stop (latched by robot)
+    u8  mode;                      // robot mode (0=idle 1=manual 2=auto ...)
+    u8  buttons;                   // button bitfield
+    u8  reserved;                  // alignment / future use
 };
 #pragma pack(pop)
 
-static_assert(sizeof(ControlPacket) == kControlSize, "ControlPacket must be 168 bytes");
+static_assert(sizeof(ControlPacket) == kControlSize, "ControlPacket must be 20 bytes");
 
 std::size_t encodeControl(const ControlPacket& p, u8* out, std::size_t cap);
 bool decodeControl(const u8* in, std::size_t len, ControlPacket& p);

@@ -11,7 +11,7 @@ std::size_t encodeTelemetry(const TelemetryPacket& p, u8* out, std::size_t cap) 
 bool decodeTelemetry(const u8* in, std::size_t len, TelemetryPacket& p) {
     if (len != kTelemetrySize) return false;
     std::memcpy(&p, in, kTelemetrySize);
-    return p.magic == kTelemetryMagic && p.size == kTelemetrySize;
+    return true;
 }
 
 } // namespace robotlink

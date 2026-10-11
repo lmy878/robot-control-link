@@ -165,61 +165,33 @@ breaking older peers. Values may be `u8`, `u16`, `f32`, or arrays of `f32`.
 ### 7.3 Fixed-size application packets
 
 The primary motion path uses two **packed, fixed-size** structs copied verbatim
-as the frame payload (both peers are little-endian SoCs). They are defined in
-`include/link/control.hpp` and `include/link/telemetry.hpp`.
+as the frame payload (both peers are little-endian SoCs; frame-level CRC/FEC
+covers integrity). They are defined in `include/link/control.hpp` and
+`include/link/telemetry.hpp`. Both are `#pragma pack(1)` with
+`static_assert(sizeof == size)`.
 
-**`ControlPacket` (downlink, 168 bytes)** — sent by the controller at 100 Hz on
+**`ControlPacket` (downlink, 20 bytes)** — sent by the controller at 100 Hz on
 the control stream, reliably:
 
 | Off | Type | Field |
 |----:|------|-------|
-| 0 | u16 | magic `0x4354` |
-| 2 | u16 | size `168` |
-| 4 | u32 | seq |
-| 8 | u64 | timestamp_us |
-| 16 | f32[3] | vel: vx, vy, wz |
-| 28 | u8 | arm_count |
-| 29 | u8 | arm_dof |
-| 30 | u16 | flags |
-| 32 | f32[4][6] | arm_joints (rad) |
-| 128 | u16 | command |
-| 130 | u8 | mode |
-| 131 | u8 | estop |
-| 132 | u8[36] | reserved |
+| 0 | f32[4] | joystick axes: x, y, z, yaw (normalized, −1..1) |
+| 16 | u8 | estop (1 = emergency stop, latched by robot) |
+| 17 | u8 | mode (0=idle 1=manual 2=auto …) |
+| 18 | u8 | buttons bitfield |
+| 19 | u8 | reserved |
 
 **`TelemetryPacket` (uplink, 340 bytes)** — sent by the robot at 200 Hz on the
 telemetry stream, best-effort (FEC-only):
 
 | Off | Type | Field |
 |----:|------|-------|
-| 0 | u16 | magic `0x544D` |
-| 2 | u16 | size `340` |
-| 4 | u32 | seq |
-| 8 | u64 | timestamp_us |
-| 16 | f32[3] | pos x,y,z (m) |
-| 28 | f32[3] | vel vx,vy,vz (m/s) |
-| 40 | f32[3] | rpy roll,pitch,yaw (rad) |
-| 52 | f32[3] | ang_vel wx,wy,wz (rad/s) |
-| 64 | f32[3] | accel ax,ay,az (m/s²) |
-| 76 | f32 | battery_v (V) |
-| 80 | f32 | battery_i (A) |
-| 84 | f32[8] | temps (°C) |
-| 116 | u8 | arm_count |
-| 117 | u8 | arm_dof |
-| 118 | u16 | status_flags |
-| 120 | f32[4][6] | arm_joints (rad) |
-| 216 | f32[6] | motor_current (A) |
-| 240 | f32[6] | motor_rpm |
-| 264 | u32 | faults |
-| 268 | f32 | cpu_load (%) |
-| 272 | f32 | mem_used_mb |
-| 276 | f32 | loop_rate_hz |
-| 280 | u32 | uptime_ms |
-| 284 | u8 | mode |
-| 285 | u8 | estop |
-| 286 | u8[54] | reserved |
+| 0 | f32[5][4] | 5 quaternions `[w,x,y,z]` (base + 4 arms) |
+| 80 | f32[15] | 15 laser range measurements (m) |
+| 140 | f32[50] | 50 robot states (joint pos/vel, …) |
 
-Both structs are `#pragma pack(1)` with `static_assert(sizeof == size)`.
+Total: 80 + 60 + 200 = **340 bytes**. Frame `Seq` and a timestamp live in the
+16-byte frame header, so the payload carries only data.
 
 ---
 
@@ -327,7 +299,7 @@ Joint targets are clamped to per-joint `[min, max]` before being applied.
 | Link timeout | 3 s |
 | Downlink rate | 100 Hz |
 | Uplink rate | 200 Hz |
-| ControlPacket size | 168 bytes |
+| ControlPacket size | 20 bytes |
 | TelemetryPacket size | 340 bytes |
 
 ---
