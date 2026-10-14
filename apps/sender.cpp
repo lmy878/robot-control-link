@@ -1,5 +1,5 @@
 // Controller side: sends movement orders + velocity setpoints (downlink) and
-// receives telemetry (uplink). Downlink commands use ACK + retransmit.
+// receives telemetry (uplink). Downlink commands are best-effort / FEC-only.
 //
 // Usage: sender [peer_ip] [peer_port] [bind_port]
 //   defaults: 127.0.0.1  5600  5601
@@ -38,7 +38,6 @@ int main(int argc, char** argv) {
     std::printf("sender: bind=%u peer=%s:%u\n", bind_port, peer_ip.c_str(), peer_port);
 
     Endpoint ep(t);
-    ep.setRto(std::chrono::milliseconds(30));
     ep.setHeartbeatInterval(std::chrono::milliseconds(1000));
     ep.setLinkTimeout(std::chrono::milliseconds(3000));
     ep.onState([](Endpoint::ConnState s) {
@@ -46,9 +45,6 @@ int main(int argc, char** argv) {
         std::printf("sender: link state -> %s\n", names[int(s)]);
     });
     ep.beginConnect(0xABCD1234u);      // start the handshake
-
-    std::atomic<unsigned> acked{0};
-    ep.onAck([&](u16, u8) { acked++; });
 
     ep.onMessage([&](const FrameHeader& h, const u8* pl, std::size_t n) {
         switch (MsgType(h.msg_type)) {
@@ -76,7 +72,6 @@ int main(int argc, char** argv) {
     auto next = start;
     MoveDir last_dir = MoveDir::Stop;
     unsigned ticks = 0;
-    const unsigned in_flight_limit = 8;
 
     while (g_run) {
         next += std::chrono::milliseconds(10); // 100 Hz downlink
@@ -91,32 +86,31 @@ int main(int argc, char** argv) {
         else if (slot < 6.0)  { v.wz = 1.0f; dir = MoveDir::RotateLeft; }
         else                  { dir = MoveDir::Stop; }
 
-        // Discrete order on state change: reliable (ACK + retransmit).
+        // Discrete order on state change: best-effort (FEC-only).
         const bool active = ep.connState() == Endpoint::ConnState::Active;
         if (active && dir != last_dir) {
             MoveOrder mo{dir, u8(dir == MoveDir::Stop ? 0 : 180), 0};
             u8 pl[16];
             std::size_t n = encodeMoveOrder(mo, pl, sizeof(pl));
-            if (n) ep.sendReliable(MsgType::MoveOrder, StreamControl, pl, n);
+            if (n) ep.send(MsgType::MoveOrder, StreamControl, pl, n, FlagPayloadCrc);
             last_dir = dir;
         }
 
-        // Continuous velocity setpoint: reliable, but bounded in-flight so stale
-        // setpoints are never retransmitted forever (latching on the receiver).
-        if (active && ep.pendingCount() < in_flight_limit) {
+        // Continuous velocity setpoint: best-effort; the next setpoint simply
+        // supersedes a lost one (latching on the receiver).
+        if (active) {
             u8 pl[24];
             std::size_t n = encodeVelocity(v, pl, sizeof(pl));
-            if (n) ep.sendReliable(MsgType::SetVelocity, StreamControl, pl, n);
+            if (n) ep.send(MsgType::SetVelocity, StreamControl, pl, n, FlagPayloadCrc);
         }
 
         ep.poll(0);
         ep.tick();
         if (++ticks % 100 == 0)
-            std::printf("sender: t=%.1fs acked=%u pending=%zu\n",
-                        phase, acked.load(), ep.pendingCount());
+            std::printf("sender: t=%.1fs\n", phase);
 
         std::this_thread::sleep_until(next);
     }
-    std::printf("sender: done (acked=%u)\n", acked.load());
+    std::printf("sender: done\n");
     return 0;
 }

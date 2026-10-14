@@ -29,10 +29,6 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from fec import RSBlock  # noqa: E402
 
 MAGIC = b"RL"
-FLAG_ACK_REQ = 1 << 0
-FLAG_IS_ACK = 1 << 1
-FLAG_IS_NACK = 1 << 2
-FLAG_RETRANSMIT = 1 << 3
 
 _running = True
 
@@ -43,7 +39,7 @@ def _on_signal(_sig, _frm):
 
 
 def parse_header(b):
-    if len(b) < 16 or b[0:2] != MAGIC:
+    if len(b) < 14 or b[0:2] != MAGIC:
         return None
     return {
         "version": b[2],
@@ -51,8 +47,7 @@ def parse_header(b):
         "flags": b[4],
         "stream": b[5],
         "seq": struct.unpack_from("<H", b, 6)[0],
-        "ack": struct.unpack_from("<H", b, 8)[0],
-        "plen": struct.unpack_from("<H", b, 10)[0],
+        "plen": struct.unpack_from("<H", b, 8)[0],
     }
 
 
@@ -68,9 +63,6 @@ def _dir_stats():
         "in": 0,
         "out": 0,
         "dropped": 0,
-        "retransmit": 0,
-        "acks": 0,
-        "nacks": 0,
         "dup_frames": 0,
         "streams": {},          # stream id -> count
         "fec_blocks": 0,
@@ -117,12 +109,6 @@ class Channel:
         if not h:
             return
         st["streams"][str(h["stream"])] = st["streams"].get(str(h["stream"]), 0) + 1
-        if h["flags"] & FLAG_RETRANSMIT:
-            st["retransmit"] += 1
-        if h["flags"] & FLAG_IS_ACK:
-            st["acks"] += 1
-        if h["flags"] & FLAG_IS_NACK:
-            st["nacks"] += 1
         if h["stream"] == 0:  # control stream: track duplicates on the wire
             if h["seq"] in self.seen_seq[direction]:
                 st["dup_frames"] += 1

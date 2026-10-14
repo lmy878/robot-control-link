@@ -1,5 +1,5 @@
-// Robot side: receives + decodes commands (downlink, ACKed), drives the omni
-// base and 4 arms, and streams telemetry (uplink, FEC-only / best effort).
+// Robot side: receives + decodes commands (downlink, best-effort / FEC-only),
+// drives the omni base and 4 arms, and streams telemetry (uplink, FEC-only).
 //
 // Usage: receiver [peer_ip] [peer_port] [bind_port]
 //   defaults: 127.0.0.1  5601  5600
@@ -129,8 +129,8 @@ int main(int argc, char** argv) {
     unsigned status_hz = 0;
 
     while (g_run) {
-        ep.poll(1);           // decode RX + send ACKs
-        ep.tick();            // ARQ timers
+        ep.poll(1);           // decode RX + dispatch
+        ep.tick();            // session housekeeping
 
         // Failsafe: no valid command within timeout -> stop.
         if (!rs.estop && clk::now() - rs.last_cmd > failsafe_ms) {

@@ -11,10 +11,9 @@ std::size_t encodeHeader(const FrameHeader& h, u8* out) {
     out[4] = h.flags;
     out[5] = h.stream_id;
     putU16(out + 6,  h.seq);
-    putU16(out + 8,  h.ack_seq);
-    putU16(out + 10, h.payload_len);
+    putU16(out + 8,  h.payload_len);
+    putU16(out + 10, h.reserved);
     putU16(out + 12, crc16(out, 12));
-    putU16(out + 14, h.reserved);
     return kHeaderSize;
 }
 
@@ -26,10 +25,9 @@ bool decodeHeader(const u8* in, std::size_t len, FrameHeader& out) {
     out.flags       = in[4];
     out.stream_id   = in[5];
     out.seq         = getU16(in + 6);
-    out.ack_seq     = getU16(in + 8);
-    out.payload_len = getU16(in + 10);
+    out.payload_len = getU16(in + 8);
+    out.reserved    = getU16(in + 10);
     out.header_crc  = getU16(in + 12);
-    out.reserved    = getU16(in + 14);
     if (crc16(in, 12) != out.header_crc) return false;
     if (out.version != kVersion) return false;
     if (out.payload_len > kMaxPayload + 2) return false;

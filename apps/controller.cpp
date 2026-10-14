@@ -1,6 +1,7 @@
-// Controller (RPi): 100 Hz downlink control (joystick + estop + mode, reliable
-// on the control stream) and uplink telemetry receive/parse (5 quaternions +
-// 15 laser + 50 states = 340-byte packet). Session disabled.
+// Controller (RPi): 100 Hz downlink control (joystick + estop + mode,
+// best-effort / FEC-only on the control stream) and uplink telemetry
+// receive/parse (5 quaternions + 15 laser + 50 states = 340-byte packet).
+// Session disabled.
 //
 // Usage: controller [peer_ip] [peer_port] [bind_port]
 //   defaults: 127.0.0.1  5600  5601
@@ -42,11 +43,9 @@ int main(int argc, char** argv) {
                 bind_port, peer_ip.c_str(), peer_port);
 
     Endpoint ep(t);               // session intentionally paused
-    ep.setRto(std::chrono::milliseconds(30));
 
-    std::atomic<unsigned> acked{0}, telem_rx{0};
+    std::atomic<unsigned> telem_rx{0};
     TelemetryPacket last{};
-    ep.onAck([&](u16, u8) { acked++; });
 
     ep.onMessage([&](const FrameHeader& h, const u8* pl, std::size_t n) {
         switch (MsgType(h.msg_type)) {
@@ -72,7 +71,6 @@ int main(int argc, char** argv) {
     const auto start = clk::now();
     auto next = start;
     auto next_print = start;
-    const unsigned in_flight_limit = 8;
     u8 mode = 1;
     u8 estop = 0;
 
@@ -90,20 +88,18 @@ int main(int argc, char** argv) {
         cp.mode = mode;
         cp.buttons = 0;
 
-        if (ep.pendingCount() < in_flight_limit) {
-            u8 pl[kControlSize];
-            std::size_t n = encodeControl(cp, pl, sizeof(pl));
-            if (n) ep.sendReliable(MsgType::ControlCmd, StreamControl, pl, n);
-        }
+        u8 pl[kControlSize];
+        std::size_t n = encodeControl(cp, pl, sizeof(pl));
+        if (n) ep.send(MsgType::ControlCmd, StreamControl, pl, n, FlagPayloadCrc);
 
-        ep.poll(0);      // receive telemetry (control acks handled first)
+        ep.poll(0);      // receive telemetry
         ep.tick();
 
         // ---- status print, ~1 Hz ----
         if (clk::now() >= next_print) {
             next_print += std::chrono::milliseconds(1000);
-            std::printf("ctl: acked=%u pending=%zu | telem=%.0fHz | quat0=(%.2f,%.2f,%.2f,%.2f) laser0=%.2f state0=%.3f\n",
-                        acked.load(), ep.pendingCount(), double(telem_rx.load()),
+            std::printf("ctl: telem=%.0fHz | quat0=(%.2f,%.2f,%.2f,%.2f) laser0=%.2f state0=%.3f\n",
+                        double(telem_rx.load()),
                         last.quaternions[0][0], last.quaternions[0][1],
                         last.quaternions[0][2], last.quaternions[0][3],
                         last.laser[0], last.states[0]);

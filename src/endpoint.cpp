@@ -37,41 +37,17 @@ bool Endpoint::isDuplicate(StreamId s, u16 seq) {
 }
 
 bool Endpoint::send(MsgType type, StreamId stream, const u8* payload, std::size_t plen,
-                    u16 ack_seq, u8 flags) {
+                    u8 flags) {
     FrameHeader h;
     h.msg_type  = u8(type);
     h.flags     = flags;
     h.stream_id = u8(stream);
     h.seq       = nextSeq(stream);
-    h.ack_seq   = ack_seq ? ack_seq : piggyback_ack_;
-    piggyback_ack_ = 0;
 
     u8 out[kMaxFrame];
     std::size_t n = buildFrame(h, payload, plen, out, sizeof(out));
     if (n == 0) return false;
     return t_.send(out, n) == static_cast<int>(n);
-}
-
-u16 Endpoint::sendReliable(MsgType type, StreamId stream, const u8* payload, std::size_t plen) {
-    FrameHeader h;
-    h.msg_type  = u8(type);
-    h.flags     = FlagAckReq | FlagPayloadCrc;
-    h.stream_id = u8(stream);
-    h.seq       = nextSeq(stream);
-    h.ack_seq   = piggyback_ack_;
-    piggyback_ack_ = 0;
-
-    Pending p;
-    p.len = buildFrame(h, payload, plen, p.frame, sizeof(p.frame));
-    if (p.len == 0) return 0;
-    p.sent = std::chrono::steady_clock::now();
-
-    {
-        std::lock_guard<std::mutex> lk(mtx_);
-        pending_[h.seq] = p;
-    }
-    t_.send(p.frame, p.len);
-    return h.seq;
 }
 
 void Endpoint::poll(int timeout_ms) {
@@ -109,26 +85,9 @@ void Endpoint::poll(int timeout_ms) {
         last_rx_time_ = std::chrono::steady_clock::now();
         if (conn_state_ == ConnState::Lost) setState(ConnState::Active);
 
-        // ACK / NACK handling (control stream semantics -> immediate).
-        if (h.flags & FlagIsAck) {
-            {
-                std::lock_guard<std::mutex> lk(mtx_);
-                pending_.erase(h.ack_seq);
-            }
-            if (on_ack_) on_ack_(h.ack_seq, 0);
-        }
-        if (h.flags & FlagIsNack) {
-            if (on_ack_) on_ack_(h.ack_seq, 1);
-        }
-
-        // Duplicate suppression + re-ack
-        bool dup = isDuplicate(static_cast<StreamId>(h.stream_id), h.seq);
-        if (dup) {
-            if (h.flags & FlagAckReq) sendAckFor(h.seq, 0);
+        // Duplicate suppression (best-effort: duplicates are simply dropped).
+        if (isDuplicate(static_cast<StreamId>(h.stream_id), h.seq))
             continue;
-        }
-
-        if (h.flags & FlagAckReq) sendAckFor(h.seq, 0);
 
         if (count < kMaxBatch && plen <= kMaxPayload) {
             Item& it = items[count++];
@@ -173,47 +132,6 @@ void Endpoint::tick() {
         if (conn_state_ == ConnState::Active && now - last_rx_time_ > link_timeout_)
             setState(ConnState::Lost);
     }
-
-    std::lock_guard<std::mutex> lk(mtx_);
-    for (auto it = pending_.begin(); it != pending_.end();) {
-        Pending& p = it->second;
-        if (now - p.sent < rto_) { ++it; continue; }
-
-        if (p.retries >= max_retries_) {
-            it = pending_.erase(it);
-            continue;
-        }
-        FrameHeader h;
-        if (decodeHeader(p.frame, p.len, h)) {
-            h.flags |= FlagRetransmit;
-            encodeHeader(h, p.frame);
-        }
-        t_.send(p.frame, p.len);
-        p.sent = now;
-        ++p.retries;
-        ++it;
-    }
-}
-
-void Endpoint::sendAckFor(u16 seq, u8 status) {
-    u8 pl[8];
-    AckMsg a; a.ack_seq = seq; a.status = status;
-    std::size_t n = encodeAck(a, pl, sizeof(pl));
-    if (n == 0) return;
-    send(MsgType::Ack, StreamControl, pl, n, seq, FlagIsAck);
-}
-
-void Endpoint::sendNackFor(u16 seq, u8 reason) {
-    u8 pl[8];
-    AckMsg a; a.ack_seq = seq; a.status = reason;
-    std::size_t n = encodeAck(a, pl, sizeof(pl));
-    if (n == 0) return;
-    send(MsgType::Nack, StreamControl, pl, n, seq, FlagIsNack);
-}
-
-std::size_t Endpoint::pendingCount() {
-    std::lock_guard<std::mutex> lk(mtx_);
-    return pending_.size();
 }
 
 void Endpoint::setState(ConnState s) {

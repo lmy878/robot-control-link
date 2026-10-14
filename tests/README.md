@@ -10,7 +10,7 @@ tests/
   README.md               本文件（测试方案）
   probe/
     telemetry_probe.cpp   上行探针：时延 / 抖动 / PER
-    control_probe.cpp     下行可靠探针：ACK + 重传（ARQ）
+    control_probe.cpp     下行 best-effort 探针：时延 / 抖动 / PER
   unit/
     test_codec.cpp        T1 协议一致性 / 鲁棒性
     test_sched.cpp        T5 流优先级 / 去重（mock transport）
@@ -45,7 +45,7 @@ python3 tests/run_tests.py --duration 6     # 自定义每个场景的时长
 
 `lossy_channel.py` 双向转发 UDP 数据报，按设定的概率独立丢包；上行方向可叠加
 `(k, m)` 系统化 Reed–Solomon 纠删码（GF(256) Cauchy 矩阵，MDS），用于模拟 WFB-ng
-在 RCLP 之下提供的 FEC。信道同时解析 RCLP 帧头，统计每流/重传/重复帧数量。
+在 RCLP 之下提供的 FEC。信道同时解析 RCLP 帧头，统计每流/重复帧数量。
 可通过 `--drop-after` 在指定时刻起对某方向 100% 丢包，用于失效保护测试。
 
 ---
@@ -62,15 +62,15 @@ python3 tests/run_tests.py --duration 6     # 自定义每个场景的时长
   `TelemetryPacket=340 B`；流方向与优先级分类。
 - **判据**：全部用例通过 **且** 帧头损坏检测率 = 100%。
 
-### T2 可靠下行链路（ACK + 重传 / ARQ）
+### T2 下行控制性能（best-effort / FEC-only）
 
-- **目的**：验证下行指令在丢包下最终可靠投递、去重正确。
-- **方法**：`control_probe tx` 以 100 Hz 通过 `Endpoint::sendReliable` 下发
-  `ControlPacket`；`control_probe rx` 接收并自动 ACK；信道丢包率取
-  `{0, 5%, 10%, 20%}`。tx 侧统计下发 / 确认 / 未确认，rx 侧统计唯一指令与重复，
-  信道侧统计重传帧与重复帧。
-- **指标**：投递率 = acked/sent；重传帧数；重复帧数；ACK 时延（RTT）。
-- **判据**：丢包 ≤10% 时投递率 ≥99.5% 且无未确认指令；重传帧数应随丢包率上升。
+- **目的**：量化下行控制指令的**时延、抖动、PER**（协议层无 ACK/重传）。
+- **方法**：`control_probe tx` 以 100 Hz 尽力而为下发 `ControlPacket`（payload 内
+  嵌 `CLOCK_MONOTONIC` 时间戳）；`control_probe rx` 接收并按指令计数器去重、计算
+  单向时延。信道丢包率取 `{0, 5%, 10%, 20%}`。tx 侧统计下发，rx 侧统计接收 / 唯一 /
+  重复，信道侧统计线路丢弃。
+- **指标**：PER = (sent−received)/sent；时延 mean/p50/p95/p99；抖动。
+- **判据**：各丢包率下 PER ≈ 线路丢包率（best-effort 不做恢复）；无损链路 PER ≤1%。
 
 ### T3 上行遥测性能（best-effort）
 
@@ -101,12 +101,11 @@ python3 tests/run_tests.py --duration 6     # 自定义每个场景的时长
 - **方法**：
   - **单元（`unit/test_sched.cpp`）**：用内存 mock transport 预置被打乱的
     debug/telemetry/control 帧，断言 `Endpoint::poll` 按 **control → telemetry →
-    debug** 分发；同流保持到达顺序；重复序号只分发一次但会重发 ACK。
+    debug** 分发；同流保持到达顺序；重复序号只分发一次（丢弃）。
   - **集成（失效保护）**：`robot_node ↔ 信道 ↔ controller`，运行中途用
     `--drop-after` 阻断下行（控制器→机器人）。观察控制器打印的遥测 `quat0`：
-    阻断前偏航分量非零（机器人在动），阻断 ≥500 ms 后归零（失效保护生效），
-    同时 `acked` 计数冻结（不再有新指令被确认）。
-- **判据**：单元用例全通过；集成中断前有运动、断后归零、确认计数冻结。
+    阻断前偏航分量非零（机器人在动），阻断 ≥500 ms 后归零（失效保护生效）。
+  - **判据**：单元用例全通过；集成中断前有运动、断后归零。
 
 ---
 

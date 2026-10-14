@@ -6,7 +6,7 @@
 // Verifies:
 //   * incoming frames are dispatched highest-priority-first (control > tele > debug)
 //   * arrival order is preserved within a stream
-//   * duplicate sequence numbers are re-ACKed but never re-dispatched
+//   * duplicate sequence numbers are dropped (dispatched only once)
 #include <cstdio>
 #include <cstring>
 #include <deque>
@@ -92,24 +92,19 @@ int main() {
               "intra-stream arrival order preserved");
     }
 
-    // ---- duplicate suppression + re-ACK ----
+    // ---- duplicate suppression ----
     {
         MockTransport m;
-        m.rx.push_back(makeFrame(u8(MsgType::ControlCmd), u8(StreamControl), 42, FlagAckReq));
-        m.rx.push_back(makeFrame(u8(MsgType::ControlCmd), u8(StreamControl), 42, FlagAckReq));
+        m.rx.push_back(makeFrame(u8(MsgType::ControlCmd), u8(StreamControl), 42));
+        m.rx.push_back(makeFrame(u8(MsgType::ControlCmd), u8(StreamControl), 42));
 
         Endpoint ep(m);
         int dispatched = 0;
         ep.onMessage([&](const FrameHeader&, const u8*, std::size_t) { ++dispatched; });
         ep.poll(0);
 
-        int acks = 0;
-        for (const auto& f : m.tx) {
-            FrameHeader h;
-            if (decodeHeader(f.data(), f.size(), h) && (h.flags & FlagIsAck)) ++acks;
-        }
         check(dispatched == 1, "duplicate dispatched exactly once");
-        check(acks == 2, "duplicate re-ACKed");
+        check(m.tx.empty(), "duplicate produces no reply");
     }
 
     std::printf("{\"suite\":\"sched\",\"pass\":%d,\"fail\":%d,\"total\":%d}\n",

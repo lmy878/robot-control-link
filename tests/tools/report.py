@@ -53,16 +53,16 @@ def markdown(results):
     out.append("")
 
     # ---- T2 ----
-    s = r["suites"].get("T2_downlink_arq")
+    s = r["suites"].get("T2_downlink_besteffort")
     if s and s.get("scenarios"):
-        out.append("## T2 可靠下行 (ACK + 重传)")
+        out.append("## T2 下行控制 (best-effort / FEC-only)")
         out.append("")
-        out.append("| 丢包率 | 下发 | 确认 | 投递率 | 重传帧 | 重复帧 | ACK时延均值(ms) |")
-        out.append("|-------:|-----:|-----:|-------:|-------:|-------:|----------------:|")
+        out.append("| 丢包率 | 发送 | 接收 | PER | 时延均值(ms) | p99(ms) | 重复帧 |")
+        out.append("|-------:|-----:|-----:|----:|------------:|--------:|-------:|")
         for sc in s["scenarios"]:
-            out.append(f"| {_fmt(sc['loss'] * 100, 0)}% | {sc['sent']} | {sc['acked']} | "
-                       f"{_fmt(sc['delivery_ratio'] * 100, 1)}% | {sc['retransmit']} | "
-                       f"{sc['duplicates']} | {_fmt(sc['ack_latency_ms'].get('mean'))} |")
+            out.append(f"| {_fmt(sc['loss'] * 100, 0)}% | {sc['sent']} | {sc['received']} | "
+                       f"{_fmt(sc['per'] * 100, 1)}% | {_fmt(sc['latency_ms'].get('mean'))} | "
+                       f"{_fmt(sc['latency_ms'].get('p99'))} | {sc['duplicates']} |")
         out.append("")
 
     # ---- T3 ----

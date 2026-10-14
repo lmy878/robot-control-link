@@ -1,7 +1,7 @@
 # omni-arm-link
 
 面向 **全向底盘 + 4 机械臂** 机器人的实时控制链路，基于 **WFB-ng** 无线电台：
-下行指令可靠传输（ACK + 重传），上行遥测尽力而为（仅 FEC），自研二进制帧格式，
+下行指令与上行遥测均为尽力而为（仅 FEC，无 ACK/重传），自研二进制帧格式，
 使用 Linux C++17。
 
 完整的协议规范见 [`docs/PROTOCOL.md`](docs/PROTOCOL.md)。
@@ -10,16 +10,16 @@
 
 只需 `g++`（C++17）和 `make`，在本地回环即可跑通，无需电台：
 
-```sh
+```shild/robot_node、build/controller、build/sender
 cd robot-control-link
-make                              # 构建全部可执行文件
+make                 python3 tests/run_tests.py             # 构建全部可执行文件
 sh
 ./build/robot_node &              # 终端 A：机器人节点，绑定 5600
 sh
 ./build/controller                # 终端 B：控制器，绑定 5601
 ```
 
-正常运行时控制器会打印 `telem=200Hz` 且 `acked` 计数持续增长。按 `Ctrl-C` 停止，
+正常运行时控制器会打印 `telem=200Hz`。按 `Ctrl-C` 停止，
 或在后台启动时执行 `kill %1`。更多参数与示例见 [运行](#运行)。
 
 ## 目录结构
@@ -102,7 +102,7 @@ kill %1 %2          # 若使用 & 在后台启动
 # 或在前台终端按 Ctrl-C
 ```
 
-正常运行时，控制器应报告 `telem=200Hz`，且 `acked` 计数持续增长，同时能看到解析出的
+正常运行时，控制器应报告 `telem=200Hz`，同时能看到解析出的
 `quat0`/`laser0`/`state0` 数值，以及偶尔出现的 `robot log[...]` 调试输出。
 
 ### 演示模式 —— sender + receiver
@@ -129,7 +129,7 @@ receiver 绑定 `5600`，sender 绑定 `5601`。同样支持自定义地址/端�
 ## 应用层数据包（主任务）
 
 - `ControlPacket` —— 下行，**20 B**：`joystick[4]` + `estop` + `mode` +
-  `buttons`。控制流（最高优先级），可靠传输（ACK + 重传），由控制器以 100 Hz 发送。
+  `buttons`。控制流（最高优先级），尽力而为（仅 FEC），由控制器以 100 Hz 发送。
 - `TelemetryPacket` —— 上行，**340 B**：`5 个四元数`（80 B）+ `15 路激光`（60 B）
   + `50 个机器人状态`（200 B）。遥测流，尽力而为（仅 FEC），由机器人以 200 Hz 发送。
 - `Debug` 流承载 `EventLog`，优先级**最低**；接收时端点先分发控制，最后分发调试。
@@ -156,17 +156,17 @@ Reed-Solomon FEC）便透明地位于本协议之下。无需修改代码，只�
 sudo setcap cap_sys_nice+ep ./build/robot_node
 ```
 
-与对每个遥测样本都进行 ACK 不同，这里只对下行指令进行确认，因此上行保持纯尽力而为，
-200 Hz 的预算得以保留。
+协议本身不做 ACK/重传，两个方向都保持纯尽力而为，可靠性交给底层的 WFB-ng FEC；
+200 Hz 的预算与实时性得以保留。
 
 ## 协议速览
 
-- 16 字节头部：magic、version、type、flags、stream、seq、ack、len、头部 CRC。
+- 14 字节头部：magic、version、type、flags、stream、seq、len、头部 CRC。
 - TLV 载荷（向后兼容，未知标签会被跳过）。
 - 带优先级的流：**control（最高）→ telemetry → debug（最低）**。
 - 下行：`ControlCmd`（joystick/estop/mode）以及可选的 `SetVelocity`、
-  `MoveOrder`、`Stop`、`EmergencyStop`、`SetArmJoints` —— 通过 ACK +
-  重传实现可靠传输，并按序列号去重。
+  `MoveOrder`、`Stop`、`EmergencyStop`、`SetArmJoints` —— 尽力而为（仅 FEC），
+  并按序列号去重。
 - 上行：`Telemetry`（340 B）以及 `EventLog` —— 仅 FEC。
 - 会话（`ConnectReq`/`ConnectAck`、心跳）已实现但**处于暂停状态**。
 - 机器人失效保护：500 ms 未收到有效指令即自动停止。

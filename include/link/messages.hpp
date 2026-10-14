@@ -40,8 +40,6 @@ struct ArmTelemetry {
 
 struct StatusTelem { u8 mode = 0; u16 faults = 0; u8 estop = 0; };
 
-struct AckMsg { u16 ack_seq = 0; u8 status = 0; };
-
 struct ArmMode { u8 arm_id = 0; u8 mode = 0; };
 
 struct ParamSet { u16 param_id = 0; f32 value = 0; };
@@ -71,8 +69,6 @@ enum : u8 {
     BT_X = 1, BT_Y = 2, BT_YAW = 3, BT_VX = 4, BT_VY = 5, BT_WZ = 6, BT_BATT = 7,
     // Status
     ST_MODE = 1, ST_FAULTS = 2, ST_ESTOP = 3,
-    // Ack / Nack
-    ACK_SEQ = 1, ACK_STAT = 2,
     // ArmMode
     MODE_ARM = 1, MODE_VALUE = 2,
     // ParamSet
@@ -93,7 +89,6 @@ std::size_t encodeArmPose(const ArmPose& c, u8* out, std::size_t cap);
 std::size_t encodeBaseTelemetry(const BaseTelemetry& t, u8* out, std::size_t cap);
 std::size_t encodeArmTelemetry(const ArmTelemetry& t, u8* out, std::size_t cap);
 std::size_t encodeStatus(const StatusTelem& t, u8* out, std::size_t cap);
-std::size_t encodeAck(const AckMsg& a, u8* out, std::size_t cap);
 std::size_t encodeArmMode(const ArmMode& m, u8* out, std::size_t cap);
 std::size_t encodeParamSet(const ParamSet& p, u8* out, std::size_t cap);
 std::size_t encodeEventLog(const EventLog& e, u8* out, std::size_t cap);
@@ -107,7 +102,6 @@ bool decodeArmPose(const u8* in, std::size_t len, ArmPose& c);
 bool decodeBaseTelemetry(const u8* in, std::size_t len, BaseTelemetry& t);
 bool decodeArmTelemetry(const u8* in, std::size_t len, ArmTelemetry& t);
 bool decodeStatus(const u8* in, std::size_t len, StatusTelem& t);
-bool decodeAck(const u8* in, std::size_t len, AckMsg& a);
 bool decodeArmMode(const u8* in, std::size_t len, ArmMode& m);
 bool decodeParamSet(const u8* in, std::size_t len, ParamSet& p);
 bool decodeEventLog(const u8* in, std::size_t len, EventLog& e);

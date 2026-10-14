@@ -9,13 +9,12 @@ struct FrameHeader {
     u8  flags      = 0;
     u8  stream_id  = 0;
     u16 seq        = 0;
-    u16 ack_seq    = 0;
     u16 payload_len = 0;
-    u16 header_crc  = 0;
     u16 reserved    = 0;
+    u16 header_crc  = 0;
 };
 
-// Serialize a 16-byte header (recomputes header_crc).
+// Serialize a 14-byte header (recomputes header_crc).
 std::size_t encodeHeader(const FrameHeader& h, u8* out);
 
 // Validate + parse a buffer. Returns false on bad magic / CRC / version / length.

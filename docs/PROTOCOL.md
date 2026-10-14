@@ -4,7 +4,8 @@ A compact, real-time control protocol for an **omnidirectional base + 4 arms**
 robot, carried over a **WFB-ng** (Wifibroadcast-ng) radio link.
 
 - **Downlink** (controller → robot): movement orders / velocity setpoints / arm
-  commands. Delivery is **reliable** (explicit ACK + retransmit).
+  commands. Delivery is **best-effort / FEC-only** (WFB-ng protects the bits;
+  no retransmit).
 - **Uplink** (robot → controller): telemetry + status. Delivery is
   **best-effort / FEC-only** (WFB-ng protects the bits; no retransmit).
 - Rates: **downlink 100 Hz, uplink 200 Hz**, target end-to-end latency **< 20 ms**.
@@ -19,7 +20,7 @@ robot, carried over a **WFB-ng** (Wifibroadcast-ng) radio link.
 |  Application (orders, arm targets, telemetry)     |  apps/sender, apps/receiver
 +--------------------------------------------------+
 |  RCLP  (this spec)                                |  link::Endpoint
-|  framing | seq | dup-suppress | ACK/NACK | ARQ    |
+|  framing | seq | dup-suppress                     |
 +--------------------------------------------------+
 |  WFB-ng  (radio transport + Reed-Solomon FEC)     |  external service
 |  wfb_tx <- UDP  |  wfb_rx -> UDP                  |
@@ -49,7 +50,7 @@ Direction is implied by the message type (`0x00..0x7F` = downlink,
 
 ## 3. Frame format
 
-Every frame is a **16-byte header** followed by a payload:
+Every frame is a **14-byte header** followed by a payload:
 
 | Offset | Size | Field | Notes |
 |-------:|-----:|-------|-------|
@@ -59,10 +60,9 @@ Every frame is a **16-byte header** followed by a payload:
 | 4  | 1 | Flags | see §4 |
 | 5  | 1 | StreamId | `0` control, `1` telemetry, `2` session |
 | 6  | 2 | Seq | per-stream, little-endian |
-| 8  | 2 | AckSeq | piggybacked ACK (0 = none) |
-| 10 | 2 | PayloadLen | bytes after the header |
+| 8  | 2 | PayloadLen | bytes after the header |
+| 10 | 2 | Reserved | 0 (future use) |
 | 12 | 2 | HeaderCRC | CRC-16/CCITT-FALSE over bytes `0..11` |
-| 14 | 2 | Reserved | 0 (future use) |
 
 All multi-byte integers and IEEE-754 floats are **little-endian**.
 
@@ -77,14 +77,10 @@ version, length, or either CRC are silently dropped.
 
 | Bit | Name | Meaning |
 |----:|------|---------|
-| 0 | `ACK_REQ` | sender wants an ACK for this seq |
-| 1 | `IS_ACK` | this frame is an ACK (`AckSeq` = acknowledged seq) |
-| 2 | `IS_NACK` | this frame is a NACK (`AckSeq` = rejected seq) |
-| 3 | `RETRANSMIT` | a retransmission |
-| 4 | `FRAG_START` | first fragment of a message |
-| 5 | `FRAG_MORE` | more fragments follow |
-| 6 | `PAYLOAD_CRC` | trailing payload CRC-16 present |
-| 7 | `EMERGENCY` | emergency / e-stop semantics |
+| 0 | `FRAG_START` | first fragment of a message |
+| 1 | `FRAG_MORE` | more fragments follow |
+| 2 | `PAYLOAD_CRC` | trailing payload CRC-16 present |
+| 3 | `EMERGENCY` | emergency / e-stop semantics |
 
 ---
 
@@ -95,7 +91,7 @@ direction:
 
 | StreamId | Name | Direction | Priority |
 |---------:|------|-----------|----------|
-| 0 | Control | downlink commands + their ACKs | **highest** |
+| 0 | Control | downlink commands | **highest** |
 | 1 | Telemetry | uplink telemetry | high |
 | 2 | Debug | either direction (logs) | **lowest** |
 | 3 | Session | connect / heartbeat / status | (paused) |
@@ -105,9 +101,6 @@ On receive, an endpoint drains all pending frames and dispatches them
 of debug traffic can never delay a control command. Session features are
 **paused** in the current build (`session_enabled_` is off unless
 `beginConnect`/`setDeviceId` is called).
-
-A single frame may both carry a new message and piggyback `AckSeq` for the
-opposite direction.
 
 ---
 
@@ -157,8 +150,6 @@ breaking older peers. Values may be `u8`, `u16`, `f32`, or arrays of `f32`.
 | `0x83` | `TelemetryBase` | `1=x`, `2=y`, `3=yaw`, `4=vx`, `5=vy`, `6=wz` (f32), `7=battery u8` |
 | `0x84` | `TelemetryArm` | `1=arm_id u8`, `2=count u8`, `3=joints f32[]` |
 | `0x85` | `Status` | `1=mode u8`, `2=faults u16`, `3=estop u8` |
-| `0x86` | `Ack` | `1=ack_seq u16`, `2=status u8` |
-| `0x87` | `Nack` | `1=ack_seq u16`, `2=reason u8` |
 | `0x88` | `EventLog` | `1=level u8`, `2=text bytes` |
 | `0x89` | `Telemetry` | fixed-size `TelemetryPacket` (see §7.3) |
 
@@ -171,7 +162,7 @@ covers integrity). They are defined in `include/link/control.hpp` and
 `static_assert(sizeof == size)`.
 
 **`ControlPacket` (downlink, 20 bytes)** — sent by the controller at 100 Hz on
-the control stream, reliably:
+the control stream, best-effort (FEC-only):
 
 | Off | Type | Field |
 |----:|------|-------|
@@ -191,37 +182,36 @@ telemetry stream, best-effort (FEC-only):
 | 140 | f32[50] | 50 robot states (joint pos/vel, …) |
 
 Total: 80 + 60 + 200 = **340 bytes**. Frame `Seq` and a timestamp live in the
-16-byte frame header, so the payload carries only data.
+14-byte frame header, so the payload carries only data.
 
 ---
 
-## 8. Reliability
+## 8. Reliability — FEC only
 
-### 8.1 Downlink — ACK + retransmit (ARQ)
+RCLP itself does **no ARQ**: neither direction ACKs or retransmits. Reliability
+is delegated to WFB-ng, which sits below RCLP and applies Reed-Solomon FEC plus
+a link CRC to the radio frames. The receiver de-duplicates by `Seq`, so the
+protocol stays idempotent even if the radio layer repeats a frame.
 
-1. Sender assigns `Seq`, sets `ACK_REQ | PAYLOAD_CRC`, stores the frame in a
-   pending map, transmits.
-2. Receiver validates, **de-duplicates by `Seq`**, executes **once**, and
-   replies `Ack` with `AckSeq = Seq`.
-3. Sender removes the frame from pending on ACK.
-4. If no ACK within **RTO = 30 ms**, the frame is retransmitted (flag
-   `RETRANSMIT`) up to **5** times, then dropped and reported.
+### 8.1 Downlink — FEC only
 
-The controller limits in-flight velocity setpoints (bounded window, default 8)
-because setpoints are **latching** on the robot: a skipped/stale setpoint is
-harmless, an unbounded backlog is not.
+Control commands are periodic and **latching** on the robot: each new frame
+supersedes the previous one, so a skipped or stale command is harmless. Downlink
+frames therefore carry only `PAYLOAD_CRC` (optional integrity check) and are
+sent best-effort. A lost command is simply replaced by the next 100 Hz sample,
+and the robot's 500 ms failsafe stops motion if the stream goes silent.
 
 ### 8.2 Uplink — FEC only
 
-Telemetry is periodic and idempotent, so it is sent **without** `ACK_REQ` and
-carries no payload CRC by default (WFB-ng's FEC + link CRC protect it). Lost
-samples are simply superseded by the next one.
+Telemetry is periodic and idempotent, so it is sent best-effort with no payload
+CRC by default (WFB-ng's FEC + link CRC protect it). Lost samples are simply
+superseded by the next one.
 
 ### 8.3 Duplicate suppression
 
 Per stream, a 64-bit sliding window tracks recently seen sequence numbers
-(`seq` and `AckSeq` are compared modulo 65536). Duplicates are re-ACKed but
-never re-dispatched.
+(compared modulo 65536). Duplicates are dropped and never re-dispatched; there
+is no re-ACK.
 
 ---
 
@@ -289,11 +279,9 @@ Joint targets are clamped to per-joint `[min, max]` before being applied.
 |------|-------|
 | Magic | `0x52 0x4C` |
 | Version | `1` |
-| Header size | 16 bytes |
+| Header size | 14 bytes |
 | Max payload | 1024 bytes |
 | CRC-16 poly | `0x1021`, init `0xFFFF` |
-| RTO | 30 ms |
-| Max retries | 5 |
 | Failsafe timeout | 500 ms |
 | Heartbeat interval | 1 s |
 | Link timeout | 3 s |

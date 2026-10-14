@@ -42,25 +42,25 @@ int main() {
     {
         FrameHeader h;
         h.version = kVersion; h.msg_type = u8(MsgType::ControlCmd);
-        h.flags = FlagAckReq | FlagPayloadCrc; h.stream_id = u8(StreamControl);
-        h.seq = 0x1234; h.ack_seq = 0x5678; h.payload_len = 0; h.reserved = 0;
+        h.flags = FlagPayloadCrc; h.stream_id = u8(StreamControl);
+        h.seq = 0x1234; h.payload_len = 0; h.reserved = 0;
         u8 buf[kHeaderSize];
         encodeHeader(h, buf);
         FrameHeader out;
         check(decodeHeader(buf, kHeaderSize, out), "header decode valid");
         check(out.msg_type == h.msg_type && out.flags == h.flags &&
-              out.stream_id == h.stream_id && out.seq == h.seq &&
-              out.ack_seq == h.ack_seq, "header field round trip");
+              out.stream_id == h.stream_id && out.seq == h.seq,
+              "header field round trip");
     }
 
-    // ---- header corruption detection (single-bit flips in covered bytes) ----
+    // ---- header corruption detection (single-bit flips) ----
     {
         FrameHeader h; h.msg_type = 0x18; h.flags = 0; h.stream_id = 0;
-        h.seq = 100; h.ack_seq = 0; h.payload_len = 0;
+        h.seq = 100; h.payload_len = 0;
         u8 buf[kHeaderSize];
         encodeHeader(h, buf);
         int detected = 0, total = 0;
-        for (int i = 0; i < 14; ++i) {              // bytes 0..13 are CRC-covered
+        for (int i = 0; i < int(kHeaderSize); ++i) {  // every header byte
             for (int b = 0; b < 8; ++b) {
                 u8 t[kHeaderSize];
                 std::memcpy(t, buf, kHeaderSize);

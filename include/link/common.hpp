@@ -16,7 +16,7 @@ constexpr u8  kMagic0  = 0x52; // 'R'
 constexpr u8  kMagic1  = 0x4C; // 'L'
 constexpr u8  kVersion = 1;
 
-constexpr std::size_t kHeaderSize = 16;
+constexpr std::size_t kHeaderSize = 14;
 constexpr std::size_t kMaxPayload = 1024;
 constexpr std::size_t kMaxFrame   = kHeaderSize + kMaxPayload + 2; // +2 payload CRC
 
@@ -60,8 +60,6 @@ enum class MsgType : u8 {
     TelemetryBase = 0x83,
     TelemetryArm  = 0x84,
     Status        = 0x85,
-    Ack           = 0x86,
-    Nack          = 0x87,
     EventLog      = 0x88,
     Telemetry     = 0x89,   // fixed-size TelemetryPacket
 };
@@ -69,14 +67,10 @@ enum class MsgType : u8 {
 inline bool isDownlink(MsgType t) { return u8(t) <= 0x7F; }
 
 enum Flags : u8 {
-    FlagAckReq     = 1u << 0,
-    FlagIsAck      = 1u << 1,
-    FlagIsNack     = 1u << 2,
-    FlagRetransmit = 1u << 3,
-    FlagFragStart  = 1u << 4,
-    FlagFragMore   = 1u << 5,
-    FlagPayloadCrc = 1u << 6,
-    FlagEmergency  = 1u << 7,
+    FlagFragStart  = 1u << 0,
+    FlagFragMore   = 1u << 1,
+    FlagPayloadCrc = 1u << 2,
+    FlagEmergency  = 1u << 3,
 };
 
 enum StreamId : u8 {

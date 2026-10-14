@@ -63,12 +63,6 @@ std::size_t encodeStatus(const StatusTelem& t, u8* out, std::size_t cap) {
     return w.ok() ? w.size() : 0;
 }
 
-std::size_t encodeAck(const AckMsg& a, u8* out, std::size_t cap) {
-    TlvWriter w(out, cap);
-    w.u16v(ACK_SEQ, a.ack_seq); w.u8v(ACK_STAT, a.status);
-    return w.ok() ? w.size() : 0;
-}
-
 std::size_t encodeArmMode(const ArmMode& m, u8* out, std::size_t cap) {
     TlvWriter w(out, cap);
     w.u8v(MODE_ARM, m.arm_id); w.u8v(MODE_VALUE, m.mode);
@@ -202,18 +196,6 @@ bool decodeStatus(const u8* in, std::size_t len, StatusTelem& t) {
             case ST_MODE:   any |= TlvReader::asU8(v, n, t.mode); break;
             case ST_FAULTS: any |= TlvReader::asU16(v, n, t.faults); break;
             case ST_ESTOP:  any |= TlvReader::asU8(v, n, t.estop); break;
-            default: break;
-        }
-    }
-    return any;
-}
-
-bool decodeAck(const u8* in, std::size_t len, AckMsg& a) {
-    TlvReader r(in, len); u8 tag; const u8* v; std::size_t n; bool any = false;
-    while (r.next(tag, v, n)) {
-        switch (tag) {
-            case ACK_SEQ:  any |= TlvReader::asU16(v, n, a.ack_seq); break;
-            case ACK_STAT: any |= TlvReader::asU8(v, n, a.status); break;
             default: break;
         }
     }
