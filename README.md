@@ -1,100 +1,176 @@
 # omni-arm-link
 
-Real-time control link for an **omnidirectional base + 4 arms** robot over a
-**WFB-ng** radio: reliable downlink commands (ACK + retransmit), best-effort
-uplink telemetry (FEC-only), hand-rolled binary framing, Linux C++17.
+面向 **全向底盘 + 4 机械臂** 机器人的实时控制链路，基于 **WFB-ng** 无线电台：
+下行指令可靠传输（ACK + 重传），上行遥测尽力而为（仅 FEC），自研二进制帧格式，
+使用 Linux C++17。
 
-See [`docs/PROTOCOL.md`](docs/PROTOCOL.md) for the full protocol specification.
+完整的协议规范见 [`docs/PROTOCOL.md`](docs/PROTOCOL.md)。
 
-## Layout
+## 快速开始
+
+只需 `g++`（C++17）和 `make`，在本地回环即可跑通，无需电台：
+
+```sh
+cd robot-control-link
+make                              # 构建全部可执行文件
+sh
+./build/robot_node &              # 终端 A：机器人节点，绑定 5600
+sh
+./build/controller                # 终端 B：控制器，绑定 5601
+```
+
+正常运行时控制器会打印 `telem=200Hz` 且 `acked` 计数持续增长。按 `Ctrl-C` 停止，
+或在后台启动时执行 `kill %1`。更多参数与示例见 [运行](#运行)。
+
+## 目录结构
 
 ```
-include/link/   protocol headers (common, crc, frame, tlv, messages,
-                transport, endpoint, kinematics, control, telemetry)
-src/            implementation
-apps/           robot_node (Jetson), controller (RPi), + sender/receiver demo
+include/link/   协议头文件（common、crc、frame、tlv、messages、
+                transport、endpoint、kinematics、control、telemetry）
+src/            实现
+apps/           robot_node（Jetson）、controller（RPi），以及 sender/receiver 演示程序
 docs/           PROTOCOL.md
 ```
 
-## Build
+## 构建
+
+依赖：`g++`（支持 C++17）和 `make`。
 
 ```sh
-make            # builds build/robot_node, build/controller, build/sender, build/receiver
+cd robot-control-link
+make            # 生成 build/robot_node、build/controller、build/sender、build/receiver
 ```
 
-Requires only `g++` (C++17) and `make`.
-
-## Run (loopback, no radio)
-
-Two modes are provided.
-
-**Application mode (main task)** — Jetson robot node + RPi controller:
+清理构建产物：
 
 ```sh
-./build/robot_node &     # binds 5600, sends 200 Hz / 340 B telemetry
-./build/controller       # binds 5601, sends 100 Hz control packets
+make clean
 ```
 
-**Demo mode** — the older ACK-per-command sender/receiver pair:
+## 测试
+
+完整的 5 项测试方案、自动化脚make clean本与指标（时延 / 抖动 / PER / FEC 恢复率）
+采集见 [`tests/README.md`](tests/README.md)：
 
 ```sh
-./build/receiver &       # binds 5600
-./build/sender           # binds 5601
+make test
+python3 tests/run_tests.py          # 结果输出到 tests/results/
 ```
 
-In application mode you should see the controller report `telem=200Hz` with a
-growing `acked` count and the parsed `quat0`/`laser0`/`state0` values, plus
-occasional `robot log[...]` debug lines.
+## 运行
 
-## Application packets (main task)
+先在项目根目录完成 `make`。默认使用本地回环地址（`127.0.0.1`），无需电台即可运行。
+每个程序都接受相同的三个可选参数：
 
-- `ControlPacket` — downlink, **20 B**: `joystick[4]` + `estop` + `mode` +
-  `buttons`. Control stream (highest priority), reliable (ACK + retransmit),
-  sent by the controller at 100 Hz.
-- `TelemetryPacket` — uplink, **340 B**: `5 quaternions` (80 B) + `15 laser`
-  (60 B) + `50 robot states` (200 B). Telemetry stream, best-effort (FEC-only),
-  sent by the robot at 200 Hz.
-- `Debug` stream carries `EventLog` at the **lowest priority**; on receive,
-  endpoints dispatch control first, debug last.
-- **Session features are paused** (`beginConnect`/`setDeviceId` are not called;
-  `session_enabled_` stays false).
-- Telemetry is filled with **virtual data** for now (see
-  `fillVirtualTelemetry` in `apps/robot_node.cpp`).
+```
+<程序> [peer_ip] [peer_port] [bind_port]
+```
 
-Defined in `include/link/control.hpp` and `include/link/telemetry.hpp`
-(`#pragma pack(1)` + `static_assert` on exact size).
+### 应用模式（主任务）—— robot_node + controller
 
-## WFB-ng integration
+终端 A（先启动机器人节点）：sh
+kill %1 %2  
 
-WFB-ng's `wfb_tx` reads raw frames from a UDP socket and `wfb_rx` forwards
-received frames to a UDP socket. Point `link::UdpTransport` at those service
-ports and the whole radio link (plus its Reed-Solomon FEC) sits transparently
-below this protocol. No code change is required — only the IP/ports.
+```sh
+./build/robot_node
+```
 
-## Real-time
+终端 B（再启动控制器）：
 
-The robot process requests `SCHED_FIFO` (priority 50). Run it as root or grant
-`CAP_SYS_NICE` for deterministic scheduling:
+```sh
+./build/controller
+```
+
+以上为默认配置：robot_node 绑定 `5600` 并以 200 Hz 发送 340 B 遥测，controller
+绑定 `5601` 并以 100 Hz 发送 20 B 控制包。
+
+若需后台运行或自定义地址/端口：
+
+```sh
+./build/robot_node &                 # 默认：绑定 5600，向 127.0.0.1:5601 发送
+./build/controller                   # 默认：绑定 5601，向 127.0.0.1:5600 发送
+
+# 自定义示例
+./build/robot_node 127.0.0.1 5601 5600 &
+./build/controller 127.0.0.1 5600 5601
+```
+
+停止：
+
+```sh
+kill %1 %2          # 若使用 & 在后台启动
+# 或在前台终端按 Ctrl-C
+```
+
+正常运行时，控制器应报告 `telem=200Hz`，且 `acked` 计数持续增长，同时能看到解析出的
+`quat0`/`laser0`/`state0` 数值，以及偶尔出现的 `robot log[...]` 调试输出。
+
+### 演示模式 —— sender + receiver
+
+终端 A（先启动接收端）：
+
+```sh
+./build/receiver
+```
+
+终端 B（再启动发送端）：
+
+```sh
+./build/sender
+```
+
+receiver 绑定 `5600`，sender 绑定 `5601`。同样支持自定义地址/端口，例如：
+
+```sh
+./build/receiver 127.0.0.1 5601 5600 &
+./build/sender   127.0.0.1 5600 5601
+```
+
+## 应用层数据包（主任务）
+
+- `ControlPacket` —— 下行，**20 B**：`joystick[4]` + `estop` + `mode` +
+  `buttons`。控制流（最高优先级），可靠传输（ACK + 重传），由控制器以 100 Hz 发送。
+- `TelemetryPacket` —— 上行，**340 B**：`5 个四元数`（80 B）+ `15 路激光`（60 B）
+  + `50 个机器人状态`（200 B）。遥测流，尽力而为（仅 FEC），由机器人以 200 Hz 发送。
+- `Debug` 流承载 `EventLog`，优先级**最低**；接收时端点先分发控制，最后分发调试。
+- **会话功能已暂停**（未调用 `beginConnect`/`setDeviceId`；
+  `session_enabled_` 保持为 false）。
+- 遥测目前填充的是**虚拟数据**（见
+  `apps/robot_node.cpp` 中的 `fillVirtualTelemetry`）。
+
+定义位于 `include/link/control.hpp` 和 `include/link/telemetry.hpp`
+（`#pragma pack(1)` + 对精确大小的 `static_assert`）。
+
+## WFB-ng 集成
+
+WFB-ng 的 `wfb_tx` 从 UDP socket 读取原始帧，`wfb_rx` 将收到的帧转发到 UDP
+socket。将 `link::UdpTransport` 指向这些服务端口，整条无线链路（及其
+Reed-Solomon FEC）便透明地位于本协议之下。无需修改代码，只需配置 IP/端口。
+
+## 实时性
+
+机器人进程请求 `SCHED_FIFO`（优先级 50）。以 root 运行或授予
+`CAP_SYS_NICE` 以获得确定性调度：
 
 ```sh
 sudo setcap cap_sys_nice+ep ./build/robot_node
 ```
 
-Unlike an ACK per telemetry sample, only downlink commands are acknowledged, so
-uplink stays purely best-effort and the 200 Hz budget is preserved.
+与对每个遥测样本都进行 ACK 不同，这里只对下行指令进行确认，因此上行保持纯尽力而为，
+200 Hz 的预算得以保留。
 
-## Protocol at a glance
+## 协议速览
 
-- 16-byte header: magic, version, type, flags, stream, seq, ack, len, header CRC.
-- TLV payloads (forward compatible, unknown tags skipped).
-- Streams with priority: **control (highest) → telemetry → debug (lowest)**.
-- Downlink: `ControlCmd` (joystick/estop/mode) plus optional `SetVelocity`,
-  `MoveOrder`, `Stop`, `EmergencyStop`, `SetArmJoints` — reliable via ACK +
-  retransmit, deduplicated by sequence number.
-- Uplink: `Telemetry` (340 B) plus `EventLog` — FEC-only.
-- Session (`ConnectReq`/`ConnectAck`, heartbeats) is implemented but **paused**.
-- Robot failsafe: auto-stop after 500 ms without a valid command.
+- 16 字节头部：magic、version、type、flags、stream、seq、ack、len、头部 CRC。
+- TLV 载荷（向后兼容，未知标签会被跳过）。
+- 带优先级的流：**control（最高）→ telemetry → debug（最低）**。
+- 下行：`ControlCmd`（joystick/estop/mode）以及可选的 `SetVelocity`、
+  `MoveOrder`、`Stop`、`EmergencyStop`、`SetArmJoints` —— 通过 ACK +
+  重传实现可靠传输，并按序列号去重。
+- 上行：`Telemetry`（340 B）以及 `EventLog` —— 仅 FEC。
+- 会话（`ConnectReq`/`ConnectAck`、心跳）已实现但**处于暂停状态**。
+- 机器人失效保护：500 ms 未收到有效指令即自动停止。
 
-## License
+## 许可证
 
-MIT — see [LICENSE](LICENSE).
+MIT —— 见 [LICENSE](LICENSE)。

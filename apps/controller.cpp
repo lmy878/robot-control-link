@@ -31,6 +31,7 @@ int main(int argc, char** argv) {
 
     std::signal(SIGINT, onSignal);
     std::signal(SIGTERM, onSignal);
+    std::setvbuf(stdout, nullptr, _IOLBF, 0);   // live output when redirected
 
     UdpTransport t;
     if (!t.open("0.0.0.0", bind_port, peer_ip, peer_port)) {

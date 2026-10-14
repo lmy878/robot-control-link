@@ -7,9 +7,25 @@ BUILD := build
 LIB_SRCS := $(wildcard src/*.cpp)
 LIB_OBJS := $(patsubst src/%.cpp,$(BUILD)/%.o,$(LIB_SRCS))
 
-.PHONY: all clean
+TEST_BUILD := $(BUILD)/tests
+PROBE_BINS := $(patsubst tests/probe/%.cpp,$(TEST_BUILD)/%,$(wildcard tests/probe/*.cpp))
+UNIT_BINS  := $(patsubst tests/unit/%.cpp,$(TEST_BUILD)/%,$(wildcard tests/unit/*.cpp))
+
+.PHONY: all clean test
 
 all: $(BUILD)/sender $(BUILD)/receiver $(BUILD)/controller $(BUILD)/robot_node
+
+# Build the test probes and unit-test binaries (run via tests/run_tests.py).
+test: $(PROBE_BINS) $(UNIT_BINS)
+
+$(TEST_BUILD):
+	mkdir -p $(TEST_BUILD)
+
+$(PROBE_BINS): $(TEST_BUILD)/%: tests/probe/%.cpp $(LIB_OBJS) | $(TEST_BUILD)
+	$(CXX) $(CXXFLAGS) $< $(LIB_OBJS) -o $@ $(LDFLAGS)
+
+$(UNIT_BINS): $(TEST_BUILD)/%: tests/unit/%.cpp $(LIB_OBJS) | $(TEST_BUILD)
+	$(CXX) $(CXXFLAGS) $< $(LIB_OBJS) -o $@ $(LDFLAGS)
 
 $(BUILD):
 	mkdir -p $(BUILD)
