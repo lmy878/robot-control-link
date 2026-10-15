@@ -1,8 +1,9 @@
 // Robot side: receives + decodes commands (downlink, best-effort / FEC-only),
 // drives the omni base and 4 arms, and streams telemetry (uplink, FEC-only).
 //
-// Usage: receiver [peer_ip] [peer_port] [bind_port]
-//   defaults: 127.0.0.1  5601  5600
+// Usage: receiver [peer_ip] [peer_port] [bind_port] [src_ip]
+//   defaults: 127.0.0.1  5601  5600  0.0.0.0
+//   src_ip selects the local NIC used for sending (and for RX); 0.0.0.0 = any.
 #include <atomic>
 #include <chrono>
 #include <csignal>
@@ -44,17 +45,19 @@ int main(int argc, char** argv) {
     std::string peer_ip = (argc > 1) ? argv[1] : "127.0.0.1";
     u16 peer_port = (argc > 2) ? u16(std::atoi(argv[2])) : 5601;
     u16 bind_port = (argc > 3) ? u16(std::atoi(argv[3])) : 5600;
+    std::string src_ip = (argc > 4) ? argv[4] : "0.0.0.0";
 
     std::signal(SIGINT, onSignal);
     std::signal(SIGTERM, onSignal);
     std::setvbuf(stdout, nullptr, _IOLBF, 0);   // live output when redirected
 
     UdpTransport t;
-    if (!t.open("0.0.0.0", bind_port, peer_ip, peer_port)) {
-        std::fprintf(stderr, "receiver: cannot bind udp %u\n", bind_port);
+    if (!t.open(src_ip, bind_port, peer_ip, peer_port)) {
+        std::fprintf(stderr, "receiver: cannot bind %s:%u\n", src_ip.c_str(), bind_port);
         return 1;
     }
-    std::printf("receiver: bind=%u peer=%s:%u\n", bind_port, peer_ip.c_str(), peer_port);
+    std::printf("receiver: bind=%s:%u peer=%s:%u\n",
+                src_ip.c_str(), bind_port, peer_ip.c_str(), peer_port);
 
     Endpoint ep(t);
     ep.setDeviceId(0x524F424Fu);       // "ROBO"

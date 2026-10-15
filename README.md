@@ -8,19 +8,25 @@
 
 ## 快速开始
 
-只需 `g++`（C++17）和 `make`，在本地回环即可跑通，无需电台：
+只需 `g++`（C++17）和 `make`，无需电台即可跑通。下面的命令通过第 4 个参数
+指定收发所用的网卡 IP（示例为 `192.168.1.10`，请替换为本机实际网卡地址）：
 
-```shild/robot_node、build/controller、build/sender
+```sh
 cd robot-control-link
-make                 python3 tests/run_tests.py             # 构建全部可执行文件
-sh
-./build/robot_node &              # 终端 A：机器人节点，绑定 5600
-sh
-./build/controller                # 终端 B：控制器，绑定 5601
+make                              # 构建全部可执行文件
+
+# 终端 A：机器人节点，绑定 5600，用 192.168.1.10 这块网卡收发
+./build/robot_node 192.168.1.10 5601 5600 192.168.1.10
+
+# 终端 B：控制器，绑定 5601，用 192.168.1.10 这块网卡收发
+./build/controller 192.168.1.10 5600 5601 192.168.1.10
+
+#测试结束后，生成最近一次测试的测试报告
+python3 tests/run_tests.py
 ```
 
 正常运行时控制器会打印 `telem=200Hz`。按 `Ctrl-C` 停止，
-或在后台启动时执行 `kill %1`。更多参数与示例见 [运行](#运行)。
+或在后台启动时执行 `kill %1`。参数说明与更多示例见 [运行](#运行)。
 
 ## 目录结构
 
@@ -52,18 +58,27 @@ make clean
 完整的 5 项测试方案、自动化脚make clean本与指标（时延 / 抖动 / PER / FEC 恢复率）
 采集见 [`tests/README.md`](tests/README.md)：
 
+生成最近一次测试的测试报告
 ```sh
-make test
 python3 tests/run_tests.py          # 结果输出到 tests/results/
 ```
 
 ## 运行
 
 先在项目根目录完成 `make`。默认使用本地回环地址（`127.0.0.1`），无需电台即可运行。
-每个程序都接受相同的三个可选参数：
+每个程序都接受相同的四个可选参数：
 
 ```
-<程序> [peer_ip] [peer_port] [bind_port]
+<程序> [peer_ip] [peer_port] [bind_port] [src_ip]
+```
+
+`src_ip` 用于指定本机发送所用的网卡 IP（默认 `0.0.0.0`，即所有网卡）。绑定到某块
+网卡自己的 IP 后，内核会用该网卡作为源地址发送，并只在该网卡上接收。例如让双方
+都走 `192.168.1.10` 这块网卡：
+
+```sh
+./build/robot_node 192.168.1.50 5601 5600 192.168.1.10 &
+./build/controller 192.168.1.50 5600 5601 192.168.1.10
 ```
 
 ### 应用模式（主任务）—— robot_node + controller

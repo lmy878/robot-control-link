@@ -26,13 +26,20 @@ public:
     bool open(const std::string& bind_ip, u16 bind_port,
               const std::string& peer_ip, u16 peer_port);
 
+    // Passive / monitor mode: bind an RX-only socket with no peer. `send()` is
+    // disabled so a monitor can never inject traffic into the control link.
+    bool openMonitor(const std::string& bind_ip, u16 bind_port);
+
     int send(const u8* data, std::size_t len) override;
     int recv(u8* data, std::size_t cap, int timeout_ms) override;
 
     int fd() const { return fd_; }
 
 private:
+    bool bindSocket(const std::string& bind_ip, u16 bind_port);
+
     int fd_ = -1;
+    bool has_peer_ = false;
     sockaddr_in peer_{};
 };
 

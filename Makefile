@@ -13,7 +13,7 @@ UNIT_BINS  := $(patsubst tests/unit/%.cpp,$(TEST_BUILD)/%,$(wildcard tests/unit/
 
 .PHONY: all clean test
 
-all: $(BUILD)/sender $(BUILD)/receiver $(BUILD)/controller $(BUILD)/robot_node
+all: $(BUILD)/sender $(BUILD)/receiver $(BUILD)/controller $(BUILD)/robot_node $(BUILD)/monitor
 
 # Build the test probes and unit-test binaries (run via tests/run_tests.py).
 test: $(PROBE_BINS) $(UNIT_BINS)
@@ -43,6 +43,9 @@ $(BUILD)/controller: apps/controller.cpp $(LIB_OBJS) | $(BUILD)
 	$(CXX) $(CXXFLAGS) $< $(LIB_OBJS) -o $@ $(LDFLAGS)
 
 $(BUILD)/robot_node: apps/robot_node.cpp $(LIB_OBJS) | $(BUILD)
+	$(CXX) $(CXXFLAGS) $< $(LIB_OBJS) -o $@ $(LDFLAGS)
+
+$(BUILD)/monitor: apps/monitor.cpp $(LIB_OBJS) | $(BUILD)
 	$(CXX) $(CXXFLAGS) $< $(LIB_OBJS) -o $@ $(LDFLAGS)
 
 clean:
